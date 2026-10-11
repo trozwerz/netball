@@ -1,0 +1,23 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run Netball",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}\\main.exe",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "C/C++: clang++ build Netball"
+        },
+        {
+            "name": "Run Netball (1x resolution)",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}\\main.exe",
+            "args": ["--1x"],
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "C/C++: clang++ build Netball"
+        }
+    ]
+}

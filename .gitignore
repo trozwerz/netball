@@ -1,0 +1,6 @@
+*.exe
+*.pdb
+*.obj
+*.o
+*.ilk
+netball_debug_log.txt
