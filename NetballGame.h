@@ -5,6 +5,7 @@
 #include "ButtonIcons.h"
 #include "Gamepad.h"
 #include "Players.h"
+#include "PlayerProfiles.h"
 #include "olcPixelGameEngine3.h"
 
 #include <array>
@@ -30,6 +31,8 @@ class NetballGame final : public olc::PixelGameEngine
 		olc::vf4d velocity{};
 		olc::Pixel colour = olc::Colour::WHITE;
 		float lifetime = 0.0f;
+		float accelerationY = -9.8f;
+		float size = 0.09f;
 	};
 
 public:
@@ -42,6 +45,9 @@ private:
 	netball::Teams players{};
 	std::array<olc::vf4d, netball::PlayerCount> startingPositions{};
 	olc::Image courtTexture;
+	olc::Image floorTexture;
+	olc::Image postTexture;
+	bool floorTextureLoaded = false;
 	olc::Image splashImage;
 	olc::Image ballTexture;
 	std::array<olc::Image, 3> playerTextures;
@@ -76,11 +82,36 @@ private:
 	static constexpr float FinalSeconds = 30.0f;
 	float clockRemaining = MatchClockSeconds;
 	bool gameOver = false;
+	static constexpr float GameOverHoldSeconds = 1.0f;
+	float gameOverHold = 0.0f;
 	void DrawGameOver();
 	std::uint64_t frameNumber = 0;
 	std::size_t homeScore = 0;
 	std::size_t awayScore = 0;
 	std::size_t homeTurnovers = 0;
+	std::vector<netball::PlayerProfile> profiles;
+	olc::Image portraitSheet;
+	bool portraitSheetLoaded = false;
+	// Players within the double-team radius of the ball carrier, if 2 or more.
+	std::vector<std::size_t> doubleTeamed;
+	static constexpr float DoubleTeamRadius = 1.0f;
+	std::vector<std::size_t> CountNearbyDefenders(std::size_t index, float radius) const;
+	// Defenders already within reach when the receiver caught the ball; nobody
+	// else may close in until the ball is released.
+	std::vector<std::size_t> lockedDefenders;
+	bool defenderLockActive = false;
+	void EnforceDefenderLock();
+	std::size_t lastReceiver = netball::PlayerCount;
+	std::array<std::size_t, 2> assistChain{ netball::PlayerCount, netball::PlayerCount };
+	bool reboundPending = false;
+	bool dropPending = false;
+	bool dropTeamHome = true;
+	bool reboundMarkerActive = false;
+	olc::vf2d reboundMarker{};
+	float reboundLockout = 0.0f;
+	void ResolveRebound();
+	olc::vf2d PredictLooseBallLanding() const;
+	void DrawPlayerPanel();
 	std::size_t awayTurnovers = 0;
 	std::size_t homeShots = 0;
 	std::size_t awayShots = 0;
@@ -97,7 +128,7 @@ private:
 	// PlayStation by default; F2 cycles PlayStation / Xbox / Switch icons.
 	netball::ButtonPlatform consolePlatform = netball::ButtonPlatform::PlayStation;
 	netball::ButtonPlatform ActivePlatform() const;
-	void DrawConfirmPrompt(const std::string& action);
+	void DrawConfirmPrompt(const std::string& action, float holdProgress = -1.0f);
 	olc::vf4d ballPosition{};
 	olc::vf4d passStart{};
 	olc::vf4d passEnd{};
@@ -116,6 +147,16 @@ private:
 	float shotArcHeight = 0.0f;
 	float shotResetDelayRemaining = 0.0f;
 	float restartHoldRemaining = 0.0f;
+	// Substitutes beside the far touchline: index 0 away, 1 home.
+	std::array<float, 2> cheerRemaining{};
+	std::array<float, 4> cheerPhase{};
+	bool shotIsSuper = false;
+	float superStreamRemaining = 0.0f;
+	olc::vf2d superStreamPosition{};
+	bool SuperShotActive() const
+	{
+		return !gameOver && clockRemaining <= 300.0f;
+	}
 	olc::vf2d shotHoopCenter{};
 	olc::vf2d looseBallHorizontalVelocity{};
 	float looseBallVerticalVelocity = 0.0f;
@@ -185,6 +226,13 @@ private:
 	bool HandleBallOutOfBounds(const olc::vf4d& previousPosition);
 	void StartThrowIn(bool throwInTeamHome, const olc::vf2d& boundaryPosition);
 	void CompleteThrowIn();
+	// Easy mode: the user's team always completes passes and shots while
+	// trailing by 3 or more.
+	bool CatchUpAssistActive(const bool teamIsHome) const
+	{
+		return teamIsHome && !demoActive && difficulty == 0 &&
+			awayScore >= homeScore + 3;
+	}
 	void StartLooseBall(const olc::vf2d& horizontalVelocity,
 		float verticalVelocity);
 	void UpdateTeammateMovement(float elapsedTime);

@@ -1,4 +1,4 @@
-﻿#include "NetballGame.h"
+#include "NetballGame.h"
 
 #include "BallRenderer.h"
 #include "ButtonIcons.h"
@@ -217,6 +217,30 @@ bool NetballGame::OnUserCreate()
 		return false;
 	}
 
+	olc::ImageConfig floorConfig;
+	floorConfig.Filtered = true;
+	floorTextureLoaded = CreateImageFromFile(
+		floorTexture, "assets/cement_background.jpg", floorConfig);
+	if (!floorTextureLoaded)
+		std::cerr << "Unable to load floor image: assets/cement_background.jpg\n";
+
+	olc::ImageConfig postConfig;
+	postConfig.Filtered = true;
+	if (!CreateImageFromFile(postTexture, "assets/post.jpg", postConfig))
+		std::cerr << "Unable to load post image: assets/post.jpg\n";
+
+	profiles = netball::LoadProfiles("assets/players.csv");
+	olc::ImageConfig portraitConfig;
+	portraitConfig.Filtered = true;
+	portraitSheetLoaded = CreateImageFromFile(
+		portraitSheet, "assets/portraits.png", portraitConfig);
+	if (!portraitSheetLoaded)
+		portraitSheetLoaded = CreateImageFromFile(
+			portraitSheet, "assets/portraits.jpg", portraitConfig);
+	if (!portraitSheetLoaded)
+		std::cerr << "No portrait sheet (assets/portraits.png or .jpg); "
+			"portraits are skipped\n";
+
 	projection.perspective(25.0f * Pi / 180.0f,
 		float(ScreenSize().x) / float(ScreenSize().y), 0.1f, 150.0f);
 	uiScale = float(ScreenSize().y) / 1600.0f;
@@ -264,8 +288,11 @@ bool NetballGame::OnUserUpdate(const float elapsedTime)
 	if (!windowPlaced)
 	{
 		windowPlaced = true;
-		LogEvent(netball::FillMonitor(3) ? "WINDOW fullscreen display=3"
-			: "WINDOW display 3 not found");
+		const bool onDisplay3 = netball::FillMonitor(3);
+		const bool filled = onDisplay3 || netball::FillMonitor(1);
+		LogEvent(onDisplay3 ? "WINDOW fullscreen display=3"
+			: filled ? "WINDOW display 3 not found, fullscreen display=1"
+			: "WINDOW no display found");
 	}
 
 	pad = netball::PollGamepad();
@@ -307,6 +334,8 @@ bool NetballGame::OnUserUpdate(const float elapsedTime)
 			splashActive = false;
 			demoActive = true;
 			aiAttackMode = true;
+			clockRemaining = MatchClockSeconds;
+			homeScore = awayScore = 0;
 			LogEvent("AI_MODE_CHANGE home_ai=ON reason=GAME_START");
 			return true;
 		}
@@ -396,25 +425,39 @@ bool NetballGame::OnUserUpdate(const float elapsedTime)
 
 	if (gameOver)
 	{
+		const bool confirmHeld = keyboard.GetKey(olc::Key::SPACE).bHeld ||
+			(usingGamepad && pad.confirmHeld);
+		gameOverHold = confirmHeld ? gameOverHold + elapsedTime : 0.0f;
 		DrawScene();
 		DrawGameOver();
-		if (confirmPressed)
+		if (gameOverHold >= GameOverHoldSeconds)
+		{
+			gameOverHold = 0.0f;
 			StartMatch();
+		}
 		return true;
 	}
 
 	gameTime += elapsedTime;
-	if (!demoActive)
+	clockRemaining -= elapsedTime *
+		(clockRemaining <= FinalSeconds ? 1.0f : ClockSpeed);
+	if (clockRemaining <= 0.0f)
 	{
-		clockRemaining -= elapsedTime *
-			(clockRemaining <= FinalSeconds ? 1.0f : ClockSpeed);
-		if (clockRemaining <= 0.0f)
+		clockRemaining = 0.0f;
+		LogEvent("GAME_OVER score=" + std::to_string(homeScore) + "-" +
+			std::to_string(awayScore) + (demoActive ? " demo=1" : ""));
+		if (demoActive)
 		{
-			clockRemaining = 0.0f;
-			gameOver = true;
-			LogEvent("GAME_OVER score=" + std::to_string(homeScore) + "-" +
-				std::to_string(awayScore));
+			// The demo plays on: reset score, clock and positions.
+			StartMatch();
+			demoActive = true;
+			aiAttackMode = true;
+			movementMessage.clear();
+			messageTime = 0.0f;
+			LogEvent("DEMO_RESTART");
+			return true;
 		}
+		gameOver = true;
 	}
 	if (passInFlight || shotInFlight || looseBall)
 		ballSpinAngle = std::fmod(ballSpinAngle + 3.0f * elapsedTime, 2.0f * Pi);
@@ -481,28 +524,47 @@ netball::ButtonPlatform NetballGame::ActivePlatform() const
 	return usingGamepad ? consolePlatform : netball::ButtonPlatform::PC;
 }
 
-void NetballGame::DrawConfirmPrompt(const std::string& action)
+void NetballGame::DrawConfirmPrompt(const std::string& action,
+	const float holdProgress)
 {
 	const olc::vf2d promptScale{ 6.0f, 6.0f };
 	olc::Image* icon = usingGamepad ? netball::ButtonIcon(consolePlatform, 0) : nullptr;
-	const std::string text = icon ? action : "SPACE " + action;
+	const std::string prefix = holdProgress >= 0.0f ? "HOLD " : "";
+	const std::string prefixText = icon ? prefix : prefix + "SPACE ";
+	const std::string text = action;
+	const float prefixWidth = prefixText.empty()
+		? 0.0f : UiTextSize(prefixText, promptScale).x;
 	const olc::vf2d textSize = UiTextSize(text, promptScale);
 	const float iconSize = icon ? textSize.y * 1.3f : 0.0f;
 	const float gap = icon ? 16.0f : 0.0f;
-	const olc::vf2d totalSize{ iconSize + gap + textSize.x, std::max(textSize.y, iconSize) };
+	const olc::vf2d totalSize{ prefixWidth + iconSize + gap + textSize.x,
+		std::max(textSize.y, iconSize) };
 	const olc::vf2d uiScreen = UiScreenSize();
 	const olc::vf2d origin{
 		(uiScreen.x - totalSize.x) * 0.5f, uiScreen.y - totalSize.y - 80.0f };
 	UiFilledRect(origin - olc::vf2d{ 20.0f, 12.0f },
 		totalSize + olc::vf2d{ 40.0f, 24.0f }, olc::Pixel(0, 0, 0, 170));
+	if (!prefixText.empty())
+		UiString({ origin.x, origin.y + (totalSize.y - textSize.y) * 0.5f },
+			prefixText, olc::Colour::WHITE, promptScale);
 	if (icon)
 	{
 		draw.SetBlendMode(olc::BlendMode::Alpha);
-		draw.ImageRect(*icon, origin * uiScale,
+		draw.ImageRect(*icon, olc::vf2d{ origin.x + prefixWidth, origin.y } * uiScale,
 			olc::vf2d{ iconSize, iconSize } * uiScale);
 	}
-	UiString({ origin.x + iconSize + gap, origin.y + (totalSize.y - textSize.y) * 0.5f },
+	UiString({ origin.x + prefixWidth + iconSize + gap,
+		origin.y + (totalSize.y - textSize.y) * 0.5f },
 		text, olc::Colour::WHITE, promptScale);
+	if (holdProgress >= 0.0f)
+	{
+		const float barY = origin.y + totalSize.y + 14.0f;
+		UiFilledRect({ origin.x - 20.0f, barY }, { totalSize.x + 40.0f, 10.0f },
+			olc::Pixel(255, 255, 255, 60));
+		UiFilledRect({ origin.x - 20.0f, barY },
+			{ (totalSize.x + 40.0f) * std::clamp(holdProgress, 0.0f, 1.0f), 10.0f },
+			olc::Pixel(255, 215, 55));
+	}
 }
 
 void NetballGame::StartMatch()
@@ -529,6 +591,8 @@ void NetballGame::StartMatch()
 	homeScore = awayScore = 0;
 	gameTime = 0.0f;
 	clockRemaining = MatchClockSeconds;
+	superStreamRemaining = 0.0f;
+	shotIsSuper = false;
 	gameOver = false;
 	aiAttackMode = false;
 	ResetAfterShot();
@@ -641,6 +705,28 @@ void NetballGame::SetBallCarrier(const std::size_t playerIndex,
 	if (countTurnover && previousTeamHome != nextTeamHome)
 		RegisterTurnover(previousTeamHome, reason);
 
+	const bool looseRecovery = reason == "LOOSE_BALL_RECOVERED" ||
+		reason == "REBOUND_WON";
+	if (looseRecovery && reboundPending)
+	{
+		++profiles[playerIndex].rebounds;
+		LogEvent("STAT rebound player=" + profiles[playerIndex].name);
+	}
+	if (looseRecovery && dropPending && nextTeamHome != dropTeamHome)
+	{
+		++profiles[playerIndex].turnovers;
+		LogEvent("STAT turnover_won player=" + profiles[playerIndex].name);
+	}
+	reboundPending = false;
+	dropPending = false;
+	reboundMarkerActive = false;
+	if (reason != "PASS_CAUGHT")
+	{
+		lastReceiver = netball::PlayerCount;
+		assistChain.fill(netball::PlayerCount);
+	}
+	defenderLockActive = false;
+	lockedDefenders.clear();
 	ballCarrier = playerIndex;
 	catchBlendRemaining = 0.0f;
 	aiShooterPauseFor = static_cast<std::size_t>(-1);
@@ -1099,6 +1185,8 @@ bool NetballGame::StartShot()
 	}
 
 	const netball::Player& shooter = players[ballCarrier];
+	shotIsSuper = SuperShotActive() &&
+		netball::IsInSuperShotZone(shooter.position, shooter.homeTeam);
 	const bool forcedAIMiss = aiShotMustMiss;
 	aiShotMustMiss = false;
 	passStart = ballPosition;
@@ -1132,8 +1220,13 @@ bool NetballGame::StartShot()
 			: (level.aiFixedMissChance >= 0.0f ? 0.0f
 				: std::min(1.0f, rawDistanceMissChance * level.aiMissScale)));
 	std::uniform_real_distribution<float> randomChance(0.0f, 1.0f);
-	shotDistanceMustMiss = randomChance(randomEngine) < distanceMissChance;
+	const float shootingSkill = std::clamp(
+		1.0f - 0.2f * float(profiles[ballCarrier].shooting - 3), 0.0f, 2.0f);
+	shotDistanceMustMiss = randomChance(randomEngine) <
+		std::min(1.0f, distanceMissChance * shootingSkill);
 	shotMustMiss = forcedAIMiss || shotDistanceMustMiss;
+	if (userShot && CatchUpAssistActive(shooter.homeTeam))
+		shotMustMiss = false;
 	const float meterError = shootingMeterPosition - ShootingMeterMark;
 	const float hoopCenterZ =
 		goalLine - std::copysign(netball::HoopCenterInset, goalLine);
@@ -1144,7 +1237,18 @@ bool NetballGame::StartShot()
 	float missX = randomUnit(randomEngine) * scatterRadius;
 	float missZ = randomUnit(randomEngine) * scatterRadius;
 	shootingMeterGuaranteedShot = !shotMustMiss &&
-		std::abs(meterError) <= (userShot ? level.userMeterWindow : 0.03f);
+		(std::abs(meterError) <= (userShot ? level.userMeterWindow : 0.03f) ||
+			(userShot && CatchUpAssistActive(shooter.homeTeam)));
+	// Outside the guaranteed zone the user can still get lucky; the chance
+	// fades with distance from the target and is larger on easier levels.
+	if (userShot && !shotMustMiss && !shootingMeterGuaranteedShot)
+	{
+		const float beyond = std::abs(meterError) - level.userMeterWindow;
+		const float luck = level.userLuckyChance *
+			std::clamp(1.0f - beyond / level.userLuckyRange, 0.0f, 1.0f);
+		if (randomChance(randomEngine) < luck)
+			shootingMeterGuaranteedShot = true;
+	}
 	if (shootingMeterGuaranteedShot)
 	{
 		missX = 0.0f;
@@ -1330,20 +1434,20 @@ void NetballGame::DrawGameOver()
 	UiFilledRect(topLeft, { width, height }, olc::Pixel(0, 0, 0, 215));
 	olc::Pixel colour = olc::Colour::WHITE;
 	if (homeScore > awayScore)
-		colour = olc::Pixel(56, 190, 92);
+		colour = netball::HomeTeamColour;
 	else if (awayScore > homeScore)
-		colour = olc::Pixel(232, 81, 92);
+		colour = netball::AwayTeamDisplayColour;
 	UiString({ (screen.x - titleSize.x) * 0.5f, topLeft.y + 30.0f },
 		result, colour, titleScale);
 	UiString({ (screen.x - scoreSize.x) * 0.5f,
 		topLeft.y + 60.0f + titleSize.y },
 		score, olc::Colour::WHITE, scoreScale);
-	DrawConfirmPrompt("to continue");
+	DrawConfirmPrompt("to continue", gameOverHold / GameOverHoldSeconds);
 }
 
 void NetballGame::DrawShootingMeter()
 {
-	if (!shootingMeterActive && shootingMeterDisplayTime <= 0.0f)
+	if (!shootingMeterActive)
 		return;
 
 	constexpr float barWidth = 260.0f;
@@ -1389,16 +1493,14 @@ void NetballGame::DrawShootingMeter()
 	UiFilledRect(
 		{ barPosition.x, barPosition.y + 8.0f },
 		{ barWidth, barHeight - 8.0f },
-		shootingMeterGuaranteedShot
-			? Shade(24, 150, 62) : Shade(12, 30, 78));
+		Shade(12, 30, 78));
 
 	const float markX = barPosition.x + ShootingMeterMark * barWidth;
 	const float markHalfWidth =
 		std::max(4.0f, Difficulty().userMeterWindow * barWidth);
 	UiFilledRect({ markX - markHalfWidth, barPosition.y + 8.0f },
 		{ markHalfWidth * 2.0f, barHeight - 8.0f },
-		shootingMeterGuaranteedShot
-			? Shade(120, 255, 130) : Shade(255, 215, 55));
+		Shade(255, 215, 55));
 
 	for (int tick = 1; tick < 24; ++tick)
 	{
@@ -1417,6 +1519,7 @@ void NetballGame::DrawShootingMeter()
 
 void NetballGame::UpdatePassing(const float elapsedTime)
 {
+	EnforceDefenderLock();
 	if (!passInFlight)
 	{
 		if (looseBall)
@@ -1538,6 +1641,16 @@ void NetballGame::UpdatePassing(const float elapsedTime)
 				shotInFlight = false;
 				passInFlight = false;
 				StartLooseBall(bounceDirection * 3.2f, 2.8f);
+				reboundPending = true;
+				{
+					const olc::vf2d landing = PredictLooseBallLanding();
+					if (std::abs(landing.x) <= netball::CourtHalfWidth &&
+						std::abs(landing.y) <= netball::CourtHalfLength)
+					{
+						reboundMarkerActive = true;
+						reboundMarker = landing;
+					}
+				}
 				if (players[ballCarrier].homeTeam)
 					++homeMissedShots;
 				else
@@ -1595,6 +1708,7 @@ void NetballGame::UpdatePassing(const float elapsedTime)
 					(passEnd.z - passStart.z) / passDuration
 				};
 				StartLooseBall(missVelocity, -0.5f);
+				reboundPending = true;
 				movementMessage = "LOOSE BALL - MOVE TO REBOUND";
 				messageTime = 5.0f;
 			}
@@ -1656,13 +1770,36 @@ void NetballGame::UpdatePassing(const float elapsedTime)
 			std::max(0.0f, passLength - 4.0f) * 0.012f);
 		const float homeScale = passer.homeTeam
 			? Difficulty().homeDropScale : Difficulty().awayDropScale;
-		const float dropChance = std::min(0.95f, homeScale * (0.4f * std::min(
+		const float baseDrop = std::min(0.95f, homeScale * (0.4f * std::min(
 			0.30f, 0.05f + defenderProximity * 0.15f +
 				(defenderOnPassLine ? 0.10f : 0.0f)) + distanceDrop +
 			lengthDrop));
+		// Better passers/receivers drop less; rating 3 is neutral.
+		const float skillScale = std::clamp(
+			1.0f - 0.1f * float(profiles[ballCarrier].passing - 3) -
+				0.1f * float(profiles[passReceiver].passing - 3), 0.2f, 2.0f);
+		// Two or more defenders on either end of the pass add up to 30%, scaled
+		// by the average defence rating of the two closest defenders.
+		float doubleTeamDrop = 0.0f;
+		for (const std::size_t end : { ballCarrier, passReceiver })
+		{
+			const std::vector<std::size_t> nearby =
+				CountNearbyDefenders(end, DoubleTeamRadius);
+			if (nearby.size() >= 2)
+			{
+				const float defence = 0.5f * float(
+					profiles[nearby[0]].defence + profiles[nearby[1]].defence);
+				doubleTeamDrop = std::max(doubleTeamDrop,
+					0.30f * defence / 3.0f);
+			}
+		}
+		const float dropChance = CatchUpAssistActive(passer.homeTeam) ? 0.0f
+			: std::min(0.95f, baseDrop * skillScale + doubleTeamDrop);
 		std::uniform_real_distribution<float> randomChance(0.0f, 1.0f);
 		if (randomChance(randomEngine) < dropChance)
 		{
+			dropPending = true;
+			dropTeamHome = passer.homeTeam;
 			const olc::vf2d passDirection{ passDx, passDz };
 			const olc::vf2d looseDirection = passDirection.mag2() > 0.0001f
 				? passDirection.norm() : olc::vf2d{};
@@ -1690,7 +1827,17 @@ void NetballGame::UpdatePassing(const float elapsedTime)
 			return;
 		}
 
+		const std::size_t chainPasser = ballCarrier;
+		const std::size_t chainReceiver = passReceiver;
+		const std::array<std::size_t, 2> previousChain =
+			lastReceiver == chainPasser
+				? std::array<std::size_t, 2>{ assistChain[0], assistChain[1] }
+				: std::array<std::size_t, 2>{ netball::PlayerCount, netball::PlayerCount };
 		SetBallCarrier(passReceiver, "PASS_CAUGHT");
+		lastReceiver = chainReceiver;
+		assistChain = { chainPasser, previousChain[0] };
+		lockedDefenders = CountNearbyDefenders(passReceiver, DoubleTeamRadius);
+		defenderLockActive = true;
 		LogEvent("PASS_RESULT result=CAUGHT receiver=" +
 			std::string(netball::Positions[players[passReceiver].role].abbreviation));
 		SelectPlayerForPossession();
@@ -1812,9 +1959,22 @@ void NetballGame::StartThrowIn(const bool throwInTeamHome,
 	const float searchLength = isSideLine
 		? netball::CourtLength : netball::CourtWidth;
 
+	// Baseline throws go to the GA (attacking end) or the GK (own end).
+	std::size_t wantedRole = netball::PlayerCount;
+	if (!isSideLine)
+	{
+		const bool attackingEnd = throwInTeamHome == (boundaryPosition.y > 0.0f);
+		wantedRole = attackingEnd ? 1 : 6;
+	}
+
+	for (int attempt = 0; attempt < 2 && thrower >= netball::PlayerCount;
+		++attempt)
 	for (std::size_t i = 0; i < players.size(); ++i)
 	{
 		if (players[i].homeTeam != throwInTeamHome)
+			continue;
+		if (attempt == 0 && wantedRole < netball::PlayerCount &&
+			players[i].role != wantedRole)
 			continue;
 
 		for (float offset = 0.0f; offset <= searchLength;
@@ -1872,6 +2032,106 @@ void NetballGame::StartThrowIn(const bool throwInTeamHome,
 		players[thrower].position.z +=
 			std::copysign(endLineInset + behindLine, boundaryPosition.y);
 	throwInInsidePosition = throwerPosition;
+
+	// The nearest defender drops back ~2m inside the court from the thrower;
+	// any other defender inside that distance is pushed out to it.
+	constexpr float defenderGap = 2.0f;
+	const float inwardX = isSideLine ? -std::copysign(1.0f, boundaryPosition.x) : 0.0f;
+	const float inwardZ = isSideLine ? 0.0f : -std::copysign(1.0f, boundaryPosition.y);
+	const auto tryPlaceDefender = [&](const std::size_t index, const float baseX,
+		const float baseZ) -> bool
+	{
+		constexpr float Pi = 3.14159265f;
+		const float baseAngle = std::atan2(baseZ, baseX);
+		for (int step = 0; step <= 9; ++step)
+		{
+			for (const float sign : { 1.0f, -1.0f })
+			{
+				if (step == 0 && sign < 0.0f)
+					continue;
+				const float angle = baseAngle + sign * float(step) * Pi / 18.0f;
+				const olc::vf4d candidate{
+					throwerPosition.x + defenderGap * std::cos(angle), 0.0f,
+					throwerPosition.z + defenderGap * std::sin(angle) };
+				if (netball::IsLegalPosition(players[index], candidate) &&
+					!netball::OverlapsAnotherPlayer(players, index, candidate,
+						throwInTeamHome))
+				{
+					players[index].position = candidate;
+					return true;
+				}
+			}
+		}
+		return false;
+	};
+	std::size_t marker = netball::PlayerCount;
+	float markerDistance = std::numeric_limits<float>::max();
+	for (std::size_t i = 0; i < players.size(); ++i)
+	{
+		if (players[i].homeTeam == throwInTeamHome)
+			continue;
+		const float dx = players[i].position.x - throwerPosition.x;
+		const float dz = players[i].position.z - throwerPosition.z;
+		const float distance = dx * dx + dz * dz;
+		if (distance < markerDistance)
+		{
+			markerDistance = distance;
+			marker = i;
+		}
+	}
+	if (isSideLine && marker < netball::PlayerCount)
+		tryPlaceDefender(marker, inwardX, inwardZ);
+	for (std::size_t i = 0; i < players.size() && isSideLine; ++i)
+	{
+		if (players[i].homeTeam == throwInTeamHome || i == marker)
+			continue;
+		const float dx = players[i].position.x - throwerPosition.x;
+		const float dz = players[i].position.z - throwerPosition.z;
+		if (dx * dx + dz * dz < defenderGap * defenderGap)
+			tryPlaceDefender(i, dx == 0.0f && dz == 0.0f ? inwardX : dx,
+				dx == 0.0f && dz == 0.0f ? inwardZ : dz);
+	}
+	if (!isSideLine)
+	{
+		// Baseline throw: defenders inside the circle are respawned just outside
+		// it, next to the attacker they mark (opposite role: GS-GK, GA-GD, ...).
+		const bool positiveEnd = boundaryPosition.y > 0.0f;
+		const float circleCentreZ = (positiveEnd ? 1.0f : -1.0f) *
+			(netball::CourtHalfLength - netball::GoalCircleCenterInset);
+		for (std::size_t i = 0; i < players.size(); ++i)
+		{
+			if (players[i].homeTeam == throwInTeamHome ||
+				netball::GoalCircleMetric(players[i].position, positiveEnd) > 1.1f)
+				continue;
+			olc::vf4d target = players[i].position;
+			for (std::size_t j = 0; j < players.size(); ++j)
+				if (players[j].homeTeam == throwInTeamHome &&
+					players[j].role == 6 - players[i].role)
+					target = players[j].position;
+			float dx = target.x / netball::GoalCircleRadiusX;
+			float dz = (target.z - circleCentreZ) / netball::GoalCircleRadiusZ;
+			// Marking from the court side of the circle.
+			dz = (positiveEnd ? -1.0f : 1.0f) * std::max(std::abs(dz), 0.2f);
+			const float baseAngle = std::atan2(dz, dx);
+			bool placed = false;
+			for (int step = 0; step <= 18 && !placed; ++step)
+				for (const float sign : { 1.0f, -1.0f })
+				{
+					const float angle = baseAngle + sign * float(step) * 0.1f;
+					const olc::vf4d candidate{
+						1.12f * netball::GoalCircleRadiusX * std::cos(angle), 0.0f,
+						circleCentreZ + 1.12f * netball::GoalCircleRadiusZ *
+							std::sin(angle) };
+					if (!netball::IsLegalPosition(players[i], candidate) ||
+						netball::OverlapsAnotherPlayer(players, i, candidate,
+							throwInTeamHome))
+						continue;
+					players[i].position = candidate;
+					placed = true;
+					break;
+				}
+		}
+	}
 	SetBallCarrier(thrower, "THROW_IN");
 	LogEvent("THROW_IN_POSSESSION team=" +
 		std::string(throwInTeamHome ? "HOME" : "AWAY") +
@@ -1951,13 +2211,33 @@ void NetballGame::SelectPlayerForPossession()
 void NetballGame::RegisterGoal()
 {
 	const bool homeScored = players[ballCarrier].homeTeam;
+	const int points = shotIsSuper ? 2 : 1;
+	++profiles[ballCarrier].goals;
+	if (lastReceiver == ballCarrier)
+		for (const std::size_t assister : assistChain)
+			if (assister < profiles.size() && assister != ballCarrier &&
+				players[assister].homeTeam == homeScored)
+			{
+				++profiles[assister].assists;
+				LogEvent("STAT assist player=" + profiles[assister].name);
+			}
+	lastReceiver = netball::PlayerCount;
+	assistChain.fill(netball::PlayerCount);
+	LogEvent("STAT goal player=" + profiles[ballCarrier].name);
 	if (homeScored)
-		++homeScore;
+		homeScore += points;
 	else
-		++awayScore;
+		awayScore += points;
+	if (shotIsSuper)
+	{
+		LogEvent("SUPER_SHOT_GOAL team=" + std::string(homeScored ? "HOME" : "AWAY"));
+		superStreamRemaining = 1.2f;
+		superStreamPosition = shotHoopCenter;
+	}
+	cheerRemaining[homeScored ? 1 : 0] = 1.5f;
 
 	const olc::Pixel teamColour = homeScored
-		? olc::Pixel(56, 190, 92) : olc::Pixel(232, 81, 92);
+		? netball::HomeTeamColour : netball::AwayTeamDisplayColour;
 	std::uniform_real_distribution<float> horizontal(-1.0f, 1.0f);
 	std::uniform_real_distribution<float> forward(-1.0f, 1.0f);
 	std::uniform_real_distribution<float> upward(4.0f, 10.0f);
@@ -1994,10 +2274,136 @@ void NetballGame::RegisterGoal()
 
 void NetballGame::UpdateGoalParticles(const float elapsedTime)
 {
+	reboundLockout = std::max(0.0f, reboundLockout - elapsedTime);
+	doubleTeamed.clear();
+	if (!passInFlight && !looseBall && !throwInPending && !gameOver &&
+		ballCarrier < players.size() &&
+		CountNearbyDefenders(ballCarrier, DoubleTeamRadius).size() >= 2)
+		doubleTeamed.push_back(ballCarrier);
+	for (std::size_t team = 0; team < cheerRemaining.size(); ++team)
+	{
+		const bool cheering = cheerRemaining[team] > 0.0f;
+		cheerRemaining[team] = std::max(0.0f, cheerRemaining[team] - elapsedTime);
+		const float frequency = cheering ? 7.0f : 2.4f;
+		for (std::size_t sub = team * 2; sub < team * 2 + 2; ++sub)
+			cheerPhase[sub] = std::fmod(
+				cheerPhase[sub] + frequency * elapsedTime, 1.0f);
+	}
+	std::uniform_real_distribution<float> unit(0.0f, 1.0f);
+	std::uniform_real_distribution<float> jitter(-0.15f, 0.15f);
+	std::uniform_real_distribution<float> shade(0.5f, 1.4f);
+	const auto teamShade = [&](const olc::Pixel colour)
+	{
+		if (unit(randomEngine) < 0.2f)
+			return olc::Pixel(255, 255, 255);
+		const float scale = shade(randomEngine);
+		const auto scaled = [scale](const uint8_t channel)
+		{
+			return uint8_t(std::clamp(float(channel) * scale, 0.0f, 255.0f));
+		};
+		return olc::Pixel(scaled(colour.r), scaled(colour.g), scaled(colour.b));
+	};
+
+	// Yellow jet from the hoop after a super shot: twice the speed and lifetime.
+	if (superStreamRemaining > 0.0f)
+	{
+		superStreamRemaining = std::max(0.0f, superStreamRemaining - elapsedTime);
+		std::uniform_real_distribution<float> streamSpeed(8.0f, 20.0f);
+		const int count = std::max(1, int(elapsedTime * 90.0f));
+		for (int i = 0; i < count; ++i)
+			goalParticles.push_back({
+				{ superStreamPosition.x, netball::HoopHeight, superStreamPosition.y },
+				{ jitter(randomEngine), streamSpeed(randomEngine), jitter(randomEngine) },
+				olc::Pixel(255, uint8_t(200 + unit(randomEngine) * 55.0f), 30),
+				4.0f });
+	}
+
+	// White particles highlight the courtside super zone: about 64 alive at once
+	// (0.2 s lifetime), spawned at random points inside each zone.
+	if (SuperShotActive() || debugMode)
+	{
+		std::uniform_real_distribution<float> angleRange(0.0f, Pi);
+		std::uniform_real_distribution<float> radiusRange(
+			netball::SuperShotRadiusScale, 1.0f);
+		const float expected = 128.0f / 0.2f * elapsedTime;
+		int count = int(expected);
+		if (unit(randomEngine) < expected - float(count))
+			++count;
+		for (int i = 0; i < count; ++i)
+		{
+			const bool positiveEnd = unit(randomEngine) < 0.5f;
+			const float goalLine = positiveEnd
+				? netball::CourtHalfLength : -netball::CourtHalfLength;
+			const float centerZ = goalLine -
+				std::copysign(netball::GoalCircleCenterInset, goalLine);
+			const float angle = angleRange(randomEngine) + (positiveEnd ? Pi : 0.0f);
+			const float radius = radiusRange(randomEngine);
+			goalParticles.push_back({
+				{ radius * netball::GoalCircleRadiusX * std::cos(angle), 0.05f,
+					centerZ + radius * netball::GoalCircleRadiusZ * std::sin(angle) },
+				{ 0.0f, 0.3f, 0.0f }, olc::Colour::WHITE, 0.2f, 14.0f });
+		}
+	}
+
+	// GS/GA standing in the 2-point zone sparkle in their team colours.
+	if (SuperShotActive() || debugMode)
+	{
+		for (const netball::Player& player : players)
+		{
+			if (player.role > 1 ||
+				!netball::IsInSuperShotZone(player.position, player.homeTeam))
+				continue;
+			const olc::Pixel teamColour = player.homeTeam
+				? netball::HomeTeamColour : netball::AwayTeamDisplayColour;
+			// About 240 sparks per second on a ring around the player, at the
+			// height of the top quarter of the body, drawn 70% opaque.
+			const float expected = 480.0f * elapsedTime;
+			int count = int(expected);
+			if (unit(randomEngine) < expected - float(count))
+				++count;
+			constexpr float ringRadius = 1.1f;
+			for (int i = 0; i < count; ++i)
+			{
+				const float angle = unit(randomEngine) * 2.0f * Pi;
+				const olc::Pixel shaded = teamShade(teamColour);
+				goalParticles.push_back({
+					{ player.position.x + ringRadius * std::cos(angle),
+						2.6f + unit(randomEngine) * 0.84f,
+						player.position.z + ringRadius * std::sin(angle) },
+					{ 0.0f, (4.0f + unit(randomEngine) * 5.0f) * 1.25f, 0.0f },
+					olc::Pixel(shaded.r, shaded.g, shaded.b, 178), 0.175f,
+					-9.8f, 0.045f });
+			}
+		}
+	}
+
+	// Slow dark-blue ring around double-teamed ball carriers.
+	if (!doubleTeamed.empty())
+	{
+		for (const std::size_t index : doubleTeamed)
+		{
+			const netball::Player& player = players[index];
+			const float expected = 90.0f * elapsedTime;
+			int count = int(expected);
+			if (unit(randomEngine) < expected - float(count))
+				++count;
+			for (int i = 0; i < count; ++i)
+			{
+				const float angle = unit(randomEngine) * 2.0f * Pi;
+				goalParticles.push_back({
+					{ player.position.x + 0.9f * std::cos(angle),
+						0.1f + unit(randomEngine) * 1.8f,
+						player.position.z + 0.9f * std::sin(angle) },
+					{ 0.0f, 0.6f + unit(randomEngine) * 0.6f, 0.0f },
+					olc::Pixel(20, 40, 150, 200), 0.9f, 0.0f, 0.07f });
+			}
+		}
+	}
+
 	for (GoalParticle& particle : goalParticles)
 	{
 		particle.lifetime = std::max(0.0f, particle.lifetime - elapsedTime);
-		particle.velocity.y -= 9.8f * elapsedTime;
+		particle.velocity.y += particle.accelerationY * elapsedTime;
 		particle.position.x += particle.velocity.x * elapsedTime;
 		particle.position.y += particle.velocity.y * elapsedTime;
 		particle.position.z += particle.velocity.z * elapsedTime;
@@ -2018,7 +2424,7 @@ void NetballGame::DrawGoalParticles()
 	colours.reserve(goalParticles.size() * 12);
 	for (const GoalParticle& particle : goalParticles)
 	{
-		constexpr float size = 0.09f;
+		const float size = particle.size;
 		const olc::vf4d& p = particle.position;
 		const olc::Pixel colour = particle.colour;
 		const olc::vf4d x0{ p.x - size, p.y - size, p.z };
@@ -2034,6 +2440,7 @@ void NetballGame::DrawGoalParticles()
 		points.insert(points.end(), { z0, z1, z2, z0, z2, z3 });
 		colours.insert(colours.end(), 6, colour);
 	}
+	draw.SetBlendMode(olc::BlendMode::Alpha);
 	draw.Mesh(olc::Structure::List, points, colours);
 }
 
@@ -2061,10 +2468,155 @@ void NetballGame::StartLooseBall(const olc::vf2d& horizontalVelocity,
 	}
 }
 
+std::vector<std::size_t> NetballGame::CountNearbyDefenders(
+	const std::size_t index, const float radius) const
+{
+	std::vector<std::pair<float, std::size_t>> found;
+	for (std::size_t i = 0; i < players.size(); ++i)
+	{
+		if (players[i].homeTeam == players[index].homeTeam)
+			continue;
+		const float dx = players[i].position.x - players[index].position.x;
+		const float dz = players[i].position.z - players[index].position.z;
+		const float distance = std::sqrt(dx * dx + dz * dz);
+		if (distance <= radius)
+			found.push_back({ distance, i });
+	}
+	std::sort(found.begin(), found.end());
+	std::vector<std::size_t> result;
+	for (const auto& entry : found)
+		result.push_back(entry.second);
+	return result;
+}
+
+void NetballGame::EnforceDefenderLock()
+{
+	if (!defenderLockActive || passInFlight || looseBall ||
+		ballCarrier >= players.size() || throwInPending)
+		return;
+	const olc::vf4d centre = players[ballCarrier].position;
+	for (std::size_t i = 0; i < players.size(); ++i)
+	{
+		if (players[i].homeTeam == players[ballCarrier].homeTeam ||
+			std::find(lockedDefenders.begin(), lockedDefenders.end(), i) !=
+				lockedDefenders.end())
+			continue;
+		float dx = players[i].position.x - centre.x;
+		float dz = players[i].position.z - centre.z;
+		const float distance = std::sqrt(dx * dx + dz * dz);
+		if (distance >= DoubleTeamRadius)
+			continue;
+		if (distance < 0.001f)
+		{
+			dx = 0.0f;
+			dz = 1.0f;
+		}
+		else
+		{
+			dx /= distance;
+			dz /= distance;
+		}
+		players[i].position.x = centre.x + dx * DoubleTeamRadius;
+		players[i].position.z = centre.z + dz * DoubleTeamRadius;
+	}
+}
+
+olc::vf2d NetballGame::PredictLooseBallLanding() const
+{
+	olc::vf4d position = ballPosition;
+	olc::vf2d velocity = looseBallHorizontalVelocity;
+	float vertical = looseBallVerticalVelocity;
+	constexpr float step = 0.01f;
+	for (int i = 0; i < 600; ++i)
+	{
+		position.x += velocity.x * step;
+		position.z += velocity.y * step;
+		velocity *= std::exp(-0.8f * step);
+		vertical -= 9.8f * step;
+		position.y += vertical * step;
+		if (position.y <= netball::BallRadius)
+			break;
+	}
+	return { position.x, position.z };
+}
+
+void NetballGame::DrawPlayerPanel()
+{
+	if (demoActive || gameOver || selectedPlayer >= players.size())
+		return;
+	const netball::Player& player = players[selectedPlayer];
+	const netball::PlayerProfile& profile = profiles[selectedPlayer];
+	const olc::vf2d screen = UiScreenSize();
+	const float panelHeight = 190.0f;
+	const olc::vf2d origin{ 30.0f, screen.y - panelHeight - 30.0f };
+	UiFilledRect(origin, { 560.0f, panelHeight }, olc::Pixel(0, 0, 0, 170));
+	const olc::Pixel teamColour = player.homeTeam
+		? netball::HomeTeamColour : netball::AwayTeamDisplayColour;
+	UiFilledRect(origin, { 8.0f, panelHeight }, teamColour);
+	float textLeft = origin.x + 28.0f;
+	if (portraitSheetLoaded)
+	{
+		const int cell = std::clamp(profile.portrait, 0, 99);
+		const float u0 = float(cell % 10) / 10.0f, v0 = float(cell / 10) / 10.0f;
+		const olc::ImageRegion region(portraitSheet, { u0, v0 },
+			{ u0 + 0.1f, v0 }, { u0, v0 + 0.1f }, { u0 + 0.1f, v0 + 0.1f });
+		draw.SetBlendMode(olc::BlendMode::Alpha);
+		draw.ImageRect(region, (origin + olc::vf2d{ 24.0f, 20.0f }) * uiScale,
+			olc::vf2d{ 150.0f, 150.0f } * uiScale);
+		textLeft += 170.0f;
+	}
+	UiString({ textLeft, origin.y + 18.0f }, profile.name,
+		olc::Colour::WHITE, { 5.0f, 5.0f });
+	UiString({ textLeft, origin.y + 76.0f },
+		std::string(netball::Positions[player.role].abbreviation) + "  " +
+			netball::Positions[player.role].name,
+		olc::Pixel(255, 215, 90), { 3.0f, 3.0f });
+	UiString({ textLeft, origin.y + 122.0f },
+		"G " + std::to_string(profile.goals) +
+		"  A " + std::to_string(profile.assists) +
+		"  R " + std::to_string(profile.rebounds) +
+		"  T " + std::to_string(profile.turnovers),
+		olc::Colour::WHITE, { 3.0f, 3.0f });
+}
+
 void NetballGame::TryPickupLooseBall()
 {
-	if (!looseBall || ballPosition.y > 4.5f)
+	if (!looseBall)
+	{
+		reboundMarkerActive = false;
 		return;
+	}
+	if (ballPosition.y > 4.5f || reboundLockout > 0.0f)
+		return;
+
+	std::size_t forcedPlayer = netball::PlayerCount;
+	if (reboundMarkerActive)
+	{
+		// Nobody can claim the ball until it comes down on the marker.
+		if (ballPosition.y > netball::BallRadius + 0.03f)
+			return;
+		reboundMarkerActive = false;
+		std::size_t closest = netball::PlayerCount;
+		float closestSquared = 1.0f;
+		for (std::size_t i = 0; i < players.size(); ++i)
+		{
+			const float dx = players[i].position.x - ballPosition.x;
+			const float dz = players[i].position.z - ballPosition.z;
+			if (dx * dx + dz * dz <= closestSquared)
+			{
+				closestSquared = dx * dx + dz * dz;
+				closest = i;
+			}
+		}
+		std::uniform_real_distribution<float> chance(0.0f, 1.0f);
+		if (closest < players.size() && chance(randomEngine) < 0.70f)
+			forcedPlayer = closest;
+		else
+		{
+			reboundLockout = 0.5f;
+			return;
+		}
+	}
 
 	constexpr float pickupRadiusSquared = 1.8f * 1.8f;
 	std::size_t pickupPlayer = selectedPlayer;
@@ -2075,7 +2627,7 @@ void NetballGame::TryPickupLooseBall()
 			(players[pickupPlayer].position.z - ballPosition.z)
 		: pickupRadiusSquared;
 
-	for (std::size_t i = 0; i < players.size(); ++i)
+	for (std::size_t i = 0; i < players.size() && forcedPlayer >= players.size(); ++i)
 	{
 		const bool aiControlled = !players[i].homeTeam || aiAttackMode;
 		if (!aiControlled)
@@ -2090,6 +2642,11 @@ void NetballGame::TryPickupLooseBall()
 			pickupDistanceSquared = distanceSquared;
 		}
 	}
+	if (forcedPlayer < players.size())
+	{
+		pickupPlayer = forcedPlayer;
+		pickupDistanceSquared = 0.0f;
+	}
 
 	if (pickupPlayer >= players.size() ||
 		pickupDistanceSquared > pickupRadiusSquared)
@@ -2099,7 +2656,8 @@ void NetballGame::TryPickupLooseBall()
 	looseBallChasers.fill(netball::PlayerCount);
 	looseBallBlockedChasers.fill(netball::PlayerCount);
 	looseBallVerticalVelocity = 0.0f;
-	SetBallCarrier(pickupPlayer, "LOOSE_BALL_RECOVERED");
+	SetBallCarrier(pickupPlayer, forcedPlayer < players.size()
+		? "REBOUND_WON" : "LOOSE_BALL_RECOVERED");
 	LogEvent("LOOSE_BALL_PICKUP team=" +
 		std::string(players[pickupPlayer].homeTeam ? "HOME" : "AWAY") +
 		" player=" + netball::Positions[players[pickupPlayer].role].abbreviation);
@@ -2115,7 +2673,7 @@ void NetballGame::TryPickupLooseBall()
 
 void NetballGame::DrawScene()
 {
-	draw.Clear(Shade(24, 37, 48));
+	draw.Clear(Shade(70, 88, 105));
 
 	draw.SetViewMatrix(camera.ViewMatrix());
 
@@ -2124,8 +2682,32 @@ void NetballGame::DrawScene()
 	draw.SetModelMatrix(sideView);
 	draw.SetCullMode(olc::CullMode::None);
 
+	if (floorTextureLoaded)
+		netball::DrawFloor(draw, floorTexture);
 	netball::DrawCourt(draw, courtTexture);
-	netball::DrawGoalStructures(draw);
+	if (SuperShotActive() || debugMode)
+		netball::DrawSuperShotZone(draw);
+	netball::DrawGoalStructures(draw, postTexture);
+	if (reboundMarkerActive && looseBall)
+	{
+		std::vector<olc::vf4d> disc;
+		std::vector<olc::Pixel> discColours;
+		constexpr int segments = 20;
+		constexpr float discRadius = 0.35f;
+		for (int s = 0; s < segments; ++s)
+		{
+			const float a0 = 2.0f * Pi * float(s) / segments;
+			const float a1 = 2.0f * Pi * float(s + 1) / segments;
+			disc.push_back({ reboundMarker.x, 0.03f, reboundMarker.y });
+			disc.push_back({ reboundMarker.x + discRadius * std::cos(a0), 0.03f,
+				reboundMarker.y + discRadius * std::sin(a0) });
+			disc.push_back({ reboundMarker.x + discRadius * std::cos(a1), 0.03f,
+				reboundMarker.y + discRadius * std::sin(a1) });
+			discColours.insert(discColours.end(), 3, olc::Pixel(0, 0, 0, 230));
+		}
+		draw.SetBlendMode(olc::BlendMode::Alpha);
+		draw.Mesh(olc::Structure::List, disc, discColours);
+	}
 	if (debugMode)
 		netball::DrawDebugZoneLines(draw);
 	const std::size_t zPassTarget = passTargets[0];
@@ -2134,10 +2716,29 @@ void NetballGame::DrawScene()
 	if (passInFlight && !shotInFlight)
 		netball::DrawPassDestination(draw, passDestination,
 			players[ballCarrier].homeTeam
-				? olc::Pixel(56, 190, 92) : olc::Pixel(232, 81, 92));
+				? netball::HomeTeamColour : netball::AwayTeamDisplayColour);
+	std::vector<netball::Player> substitutes;
+	for (std::size_t team = 0; team < 2; ++team)
+	{
+		const bool home = team == 1;
+		const float amplitude = cheerRemaining[team] > 0.0f ? 1.1f : 0.25f;
+		for (std::size_t k = 0; k < 2; ++k)
+		{
+			netball::Player sub;
+			sub.homeTeam = home;
+			sub.role = 0;
+			// Second sub in each pair jumps half a cycle behind the first.
+			const float phase = std::fmod(
+				cheerPhase[team * 2 + k] + 0.5f * float(k), 1.0f);
+			sub.position = { -(netball::CourtHalfWidth + 1.6f),
+				amplitude * std::fabs(std::sin(phase * Pi)),
+				(home ? 1.0f : -1.0f) * (9.2f + 2.0f * float(k)), 0.0f };
+			substitutes.push_back(sub);
+		}
+	}
 	netball::DrawPlayers(draw, players, selectedPlayer,
 		zPassTarget, xPassTarget, cPassTarget,
-		playerTextureLoaded ? playerTextures.data() : nullptr);
+		playerTextureLoaded ? playerTextures.data() : nullptr, substitutes);
 	if (debugMode || (!demoActive && !IsAIAttacking()))
 		netball::DrawPassTargetLabels(draw, players, passTargets,
 			ActivePlatform(), ScreenSize());
@@ -2145,6 +2746,7 @@ void NetballGame::DrawScene()
 		passInFlight || looseBall);
 	DrawGoalParticles();
 	DrawHud();
+	DrawPlayerPanel();
 	DrawShootingMeter();
 }
 
@@ -2158,14 +2760,21 @@ void NetballGame::DrawHud()
 	const std::string turnovers = "TURNOVERS  " +
 		std::to_string(homeTurnovers) + "  -  " +
 		std::to_string(awayTurnovers);
-	const olc::vf2d turnoversScale{ 2.0f, 2.0f };
+	const olc::vf2d turnoversScale{ 2.4f, 2.4f };
 	const olc::vf2d turnoversSize = UiTextSize(turnovers, turnoversScale);
-	const float statsWidth = std::max(scoreboardSize.x, turnoversSize.x);
-	const float statsHeight = turnoversSize.y;
-	// Raised by one box height from the original 250.
+	const int clockTotal = int(std::ceil(clockRemaining));
+	char clockText[16];
+	std::snprintf(clockText, sizeof(clockText), "%02d:%02d",
+		clockTotal / 60, clockTotal % 60);
+	const olc::vf2d clockScale{ 4.0f, 4.0f };
+	const olc::vf2d clockSize = UiTextSize(clockText, clockScale);
+	const float statsWidth = std::max({ scoreboardSize.x, turnoversSize.x,
+		clockSize.x });
+	const float boardHeight = scoreboardSize.y + turnoversSize.y +
+		clockSize.y + 40.0f;
 	const olc::vf2d scoreboardPosition{
 		(screen.x - scoreboardSize.x) * 0.5f,
-		250.0f - (scoreboardSize.y + statsHeight + 28.0f)
+		250.0f - boardHeight
 	};
 	const float statsTop = scoreboardPosition.y + scoreboardSize.y + 8.0f;
 	UiFilledRect({
@@ -2173,7 +2782,7 @@ void NetballGame::DrawHud()
 		scoreboardPosition.y - 8.0f
 	}, {
 		statsWidth + 24.0f,
-		scoreboardSize.y + statsHeight + 28.0f
+		boardHeight
 	}, Shade(10, 22, 35));
 	UiString(scoreboardPosition, scoreboard, olc::Colour::WHITE,
 		scoreboardScale);
@@ -2181,22 +2790,22 @@ void NetballGame::DrawHud()
 		(screen.x - turnoversSize.x) * 0.5f,
 		statsTop
 	}, turnovers, olc::Colour::WHITE, turnoversScale);
+	UiString({
+		(screen.x - clockSize.x) * 0.5f,
+		statsTop + turnoversSize.y + 8.0f
+	}, clockText,
+		clockRemaining <= FinalSeconds ? olc::Pixel(255, 60, 60) : olc::Colour::WHITE,
+		clockScale);
 
 	const olc::vf2d hudScale{ 3.0f, 3.0f };
-	if (!demoActive)
+	if (debugMode)
 	{
-		const float remaining = clockRemaining;
-		const int total = int(std::ceil(remaining));
-		char clockText[16];
-		std::snprintf(clockText, sizeof(clockText), "%02d:%02d",
-			total / 60, total % 60);
-		const olc::vf2d clockScale{ 6.0f, 6.0f };
-		const olc::vf2d clockSize = UiTextSize(clockText, clockScale);
-		UiFilledRect({ 6.0f, 4.0f }, clockSize + olc::vf2d{ 24.0f, 16.0f },
-			Shade(10, 22, 35));
-		UiString({ 18.0f, 12.0f }, clockText,
-			remaining <= FinalSeconds ? olc::Pixel(255, 60, 60) : olc::Colour::WHITE,
-			clockScale);
+		char fpsText[24];
+		std::snprintf(fpsText, sizeof(fpsText), "%d FPS", int(GetFPS()));
+		const olc::vf2d fpsScale{ 9.0f, 9.0f };
+		const olc::vf2d fpsSize = UiTextSize(fpsText, fpsScale);
+		UiString({ screen.x - fpsSize.x - 24.0f, screen.y - fpsSize.y - 24.0f },
+			fpsText, olc::Pixel(120, 255, 130), fpsScale);
 	}
 	if (debugMode)
 	{
@@ -2245,7 +2854,7 @@ void NetballGame::DrawHud()
 		UiString({ 18.0f, screen.y - 76.0f },
 			selectedLabel, olc::Colour::WHITE, hudScale);
 		UiString({ 18.0f, screen.y - 40.0f },
-			"Green: home    Red: away    Powered by olcPixelGameEngine3 - OneLoneCoder.com",
+			"Yellow: home    Black: away    Powered by olcPixelGameEngine3 - OneLoneCoder.com",
 			olc::Colour::WHITE, hudScale);
 	}
 

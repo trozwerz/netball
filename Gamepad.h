@@ -17,6 +17,7 @@ namespace netball
 		bool shootPressed = false;
 		bool cyclePressed = false;     // either bumper: cycle receiver
 		bool startPressed = false;
+		bool confirmHeld = false;      // the confirm face button (A / cross) is down
 		bool backPressed = false;
 	};
 

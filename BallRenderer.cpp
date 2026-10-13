@@ -22,9 +22,9 @@ namespace
 	void DrawShadow(olc::Draw& draw, const olc::vf4d& position)
 	{
 		// Light direction matches the player shading (x, y, z).
-		constexpr float lightX = -0.5f;
+		constexpr float lightX = 0.45f;
 		constexpr float lightY = 0.8f;
-		constexpr float lightZ = -0.35f;
+		constexpr float lightZ = 0.3f;
 		constexpr int segments = 24;
 		constexpr float y = 0.03f;
 		const float height = std::max(position.y, 0.0f);

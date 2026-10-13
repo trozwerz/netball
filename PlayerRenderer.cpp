@@ -70,7 +70,7 @@ namespace
 
 	olc::vf4d LightDirection()
 	{
-		const olc::vf4d light{ -0.5f, 0.8f, -0.35f, 0.0f };
+		const olc::vf4d light{ 0.45f, 0.8f, 0.3f, 0.0f };
 		const float length = std::sqrt(light.x * light.x + light.y * light.y +
 			light.z * light.z);
 		return { light.x / length, light.y / length, light.z / length, 0.0f };
@@ -96,7 +96,7 @@ namespace
 		}
 		const float diffuse = std::max(0.0f,
 			normal.x * light.x + normal.y * light.y + normal.z * light.z);
-		const float brightness = 0.4f + 0.7f * diffuse;
+		const float brightness = 0.6f + 0.6f * diffuse;
 		const auto scale = [brightness](const uint8_t channel)
 		{
 			return uint8_t(std::min(255.0f, float(channel) * brightness));
@@ -152,11 +152,15 @@ namespace
 
 namespace netball
 {
-	void DrawPlayers(olc::Draw& draw, const Teams& players,
+	void DrawPlayers(olc::Draw& draw, const Teams& teamPlayers,
 		const std::size_t selectedPlayer, const std::size_t zPassTarget,
 		const std::size_t xPassTarget, const std::size_t cPassTarget,
-		olc::Image* textures)
+		olc::Image* textures, const std::vector<Player>& extras)
 	{
+		// Substitutes are drawn like players, after the on-court ones.
+		std::vector<Player> players(teamPlayers.begin(), teamPlayers.end());
+		players.insert(players.end(), extras.begin(), extras.end());
+		const std::size_t courtPlayerCount = teamPlayers.size();
 		const std::vector<olc::vf4d>& eggMesh = GetEggMesh();
 		static std::vector<float> brightnessCache;
 		static std::vector<olc::Pixel> whiteShadeCache;
@@ -215,14 +219,14 @@ namespace netball
 			const Player& player = players[i];
 			const float centerY = (3.44f + 0.06f) * 0.5f;
 			const olc::Pixel teamColour = player.homeTeam
-				? Shade(56, 190, 92) : Shade(232, 81, 92);
+				? HomeTeamColour : AwayTeamColour;
 			for (std::size_t v = 0; v < eggMesh.size(); ++v)
 			{
 				const olc::vf4d& vertex = eggMesh[v];
 				const float brightness = brightnessCache[v];
 				points.push_back({
 					vertex.x + player.position.x,
-					vertex.y + centerY,
+					vertex.y + centerY + player.position.y,
 					vertex.z + player.position.z
 				});
 				colours.push_back(olc::Pixel(
@@ -254,7 +258,7 @@ namespace netball
 						const olc::vf4d& vertex = eggMesh[v];
 						texturedPoints.push_back({
 							vertex.x * inflate + player.position.x,
-							vertex.y * inflate + centerY,
+							vertex.y * inflate + centerY + player.position.y,
 							vertex.z * inflate + player.position.z
 						});
 						texturedColours.push_back(whiteShadeCache[v]);
@@ -267,7 +271,7 @@ namespace netball
 			}
 		}
 
-		if (selectedPlayer < players.size())
+		if (selectedPlayer < courtPlayerCount)
 			DrawGroundCircle(draw, players[selectedPlayer].position);
 
 		(void)zPassTarget;

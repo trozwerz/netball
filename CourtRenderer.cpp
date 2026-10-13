@@ -23,17 +23,28 @@ namespace
 		colours.insert(colours.end(), 6, colour);
 	}
 
-	void DrawHoopPost(olc::Draw& draw, const float goalLine)
+	void DrawHoopPost(olc::Draw& draw, olc::Image& postTexture, const float goalLine)
 	{
-		constexpr int sides = 20;
+		constexpr int sides = 24;
 		constexpr float radius = PoleHalfWidth;
 		constexpr float bottom = 0.05f;
 		const float top = HoopHeight;
+		// Each 90 degree face shows the lettered middle of the image at its
+		// natural proportions, repeating up the pole.
+		constexpr float uCentre = 0.5f, uHalfSpan = 0.18f;
+		constexpr float tileV = 1.0f;
+		constexpr float tileHeight = 1.77f;
 		std::vector<olc::vf4d> points;
+		std::vector<olc::vf2d> uvs;
 		std::vector<olc::Pixel> colours;
-		points.reserve(sides * 12);
-		colours.reserve(sides * 12);
 		const olc::vf4d capCentreTop{ 0.0f, top, goalLine };
+		// Letters appear on all four faces of the pole, centred on the x and z
+		// axes, so they are readable from any camera direction.
+		const auto uAt = [&](const float angle, const float faceMid)
+		{
+			const float face = std::round(faceMid / (0.5f * Pi));
+			return uCentre - 2.0f * uHalfSpan * (angle - face * 0.5f * Pi) / (0.5f * Pi);
+		};
 		for (int i = 0; i < sides; ++i)
 		{
 			const float a0 = 2.0f * Pi * float(i) / float(sides);
@@ -42,16 +53,55 @@ namespace
 			const float x1 = radius * std::cos(a1), z1 = goalLine + radius * std::sin(a1);
 			const float mid = 0.5f * (a0 + a1);
 			const float light = std::clamp(
-				0.6f + 0.4f * (-0.8f * std::cos(mid) - 0.6f * std::sin(mid)),
-				0.35f, 1.0f);
-			const olc::Pixel side(uint8_t(255 * light), uint8_t(120 * light),
-				uint8_t(40 * light));
-			AddQuad(points, { x0, bottom, z0 }, { x0, top, z0 },
-				{ x1, top, z1 }, { x1, bottom, z1 }, colours, side);
+				0.75f + 0.25f * (0.8f * std::cos(mid) + 0.5f * std::sin(mid)),
+				0.5f, 1.0f);
+			const uint8_t shade = uint8_t(255 * light);
+			const olc::Pixel side(shade, shade, shade);
+			float u0 = uAt(a0, mid), u1 = uAt(a1, mid);
+			for (float y = bottom; y < top; y += tileHeight)
+			{
+				const float y1 = std::min(y + tileHeight, top);
+				const float vTop = tileV * (1.0f - (y1 - y) / tileHeight);
+				const olc::vf4d a{ x0, y, z0 }, b{ x0, y1, z0 },
+					c{ x1, y1, z1 }, d{ x1, y, z1 };
+				points.insert(points.end(), { a, b, c, a, c, d });
+				uvs.insert(uvs.end(), { { u0, tileV }, { u0, vTop }, { u1, vTop },
+					{ u0, tileV }, { u1, vTop }, { u1, tileV } });
+				colours.insert(colours.end(), 6, side);
+			}
 			points.insert(points.end(), { capCentreTop, { x1, top, z1 }, { x0, top, z0 } });
-			colours.insert(colours.end(), 3, olc::Pixel(255, 177, 70));
+			uvs.insert(uvs.end(), 3, olc::vf2d{ 0.1f, 0.1f });
+			colours.insert(colours.end(), 3, olc::Pixel(200, 200, 200));
 		}
-		draw.Mesh(olc::Structure::List, points, colours);
+		draw.Mesh(olc::Structure::List, points, colours, uvs, postTexture);
+	}
+
+	// A fake chrome look: a bright sky above, a dark horizon band and a mid-grey
+	// floor below, plus a sharp highlight from the same light as the players.
+	olc::Pixel MetalShade(const float nx, const float ny, const float nz)
+	{
+		float environment;
+		if (ny >= 0.0f)
+			environment = 0.62f + 0.55f * ny;
+		else
+			environment = 0.62f - 0.30f * -ny;
+		const float horizon = std::clamp(1.0f - std::abs(ny - 0.05f) / 0.22f,
+			0.0f, 1.0f);
+		environment -= 0.40f * horizon;
+		constexpr float lx = 0.45f, ly = 0.8f, lz = 0.3f;
+		const float lightLength = std::sqrt(lx * lx + ly * ly + lz * lz);
+		// Half-vector between the light and a viewer looking down the court.
+		const float hx = lx / lightLength, hy = ly / lightLength + 0.5f,
+			hz = lz / lightLength + 0.6f;
+		const float hl = std::sqrt(hx * hx + hy * hy + hz * hz);
+		const float spec = std::pow(
+			std::max(0.0f, (nx * hx + ny * hy + nz * hz) / hl), 36.0f);
+		const auto channel = [&](const float base)
+		{
+			return uint8_t(std::clamp(base * environment + 255.0f * spec * 0.9f,
+				0.0f, 255.0f));
+		};
+		return olc::Pixel(channel(175.0f), channel(178.0f), channel(186.0f));
 	}
 
 	void DrawHoopRing(olc::Draw& draw, const float goalLine,
@@ -86,9 +136,14 @@ namespace
 						ringCenterZ + radial * std::sin(angle)
 					};
 				};
+				const float angleMid = 0.5f * (angle0 + angle1);
+				const float sideMid = 0.5f * (sideAngle0 + sideAngle1);
+				const olc::Pixel metal = MetalShade(
+					std::cos(angleMid) * std::cos(sideMid), std::sin(sideMid),
+					std::sin(angleMid) * std::cos(sideMid));
 				AddQuad(points, ringPoint(angle0, sideAngle0),
 					ringPoint(angle1, sideAngle0), ringPoint(angle1, sideAngle1),
-					ringPoint(angle0, sideAngle1), colours, colour);
+					ringPoint(angle0, sideAngle1), colours, metal);
 			}
 		}
 
@@ -186,6 +241,33 @@ namespace
 
 namespace netball
 {
+	void DrawFloor(olc::Draw& draw, olc::Image& floorTexture)
+	{
+		// Tiles keep the texture undistorted over a large area.
+		constexpr float extent = 72.0f;
+		constexpr float tileWidth = 12.0f;
+		const float tileDepth = tileWidth *
+			float(floorTexture.Size().y) / float(floorTexture.Size().x);
+		constexpr float floorY = -0.03f;
+		std::vector<olc::vf4d> points;
+		std::vector<olc::vf2d> uvs;
+		for (float z = -extent; z < extent; z += tileDepth)
+			for (float x = -extent; x < extent; x += tileWidth)
+			{
+				const float x1 = x + tileWidth;
+				const float z1 = z + tileDepth;
+				points.insert(points.end(), {
+					{ x, floorY, z }, { x, floorY, z1 }, { x1, floorY, z1 },
+					{ x, floorY, z }, { x1, floorY, z1 }, { x1, floorY, z } });
+				uvs.insert(uvs.end(), {
+					{ 0.0f, 0.0f }, { 0.0f, 1.0f }, { 1.0f, 1.0f },
+					{ 0.0f, 0.0f }, { 1.0f, 1.0f }, { 1.0f, 0.0f } });
+			}
+		draw.Mesh(olc::Structure::List, points,
+			std::vector<olc::Pixel>(points.size(), olc::Colour::WHITE),
+			uvs, floorTexture);
+	}
+
 	void DrawCourt(olc::Draw& draw, olc::Image& courtTexture)
 	{
 		const float left = -CourtHalfWidth;
@@ -224,15 +306,15 @@ namespace netball
 			textureCoordinates, courtTexture);
 	}
 
-	void DrawGoalStructures(olc::Draw& draw)
+	void DrawGoalStructures(olc::Draw& draw, olc::Image& postTexture)
 	{
 		const olc::Pixel hoopColour = olc::Colour::WHITE;
 		for (const float goalLine : { -CourtHalfLength, CourtHalfLength })
 		{
-			DrawHoopPost(draw, goalLine);
+			DrawHoopPost(draw, postTexture, goalLine);
 			DrawHoopRing(draw, goalLine, hoopColour);
 			DrawHoopNet(draw, goalLine, goalLine > 0.0f
-				? olc::Pixel(56, 190, 92) : olc::Pixel(232, 81, 92));
+				? netball::HomeTeamColour : netball::AwayTeamDisplayColour);
 		}
 	}
 
@@ -298,6 +380,39 @@ namespace netball
 			}
 		}
 
+		draw.Mesh(olc::Structure::List, points, colours);
+	}
+
+	void DrawSuperShotZone(olc::Draw& draw)
+	{
+		constexpr float lineY = 0.09f;
+		constexpr float halfWidth = 0.18f;
+		constexpr int segments = 32;
+		const olc::Pixel white = olc::Colour::WHITE;
+		std::vector<olc::vf4d> points;
+		std::vector<olc::Pixel> colours;
+		for (const float goalLine : { -CourtHalfLength, CourtHalfLength })
+		{
+			const float centerZ = goalLine -
+				std::copysign(GoalCircleCenterInset, goalLine);
+			const float k = SuperShotRadiusScale;
+			// Courtside half only: sin < 0 at the +Z end, sin > 0 at the -Z end.
+			const float start = goalLine > 0.0f ? Pi : 0.0f;
+			for (int segment = 0; segment < segments; ++segment)
+			{
+				const float angle0 = start + Pi * float(segment) / float(segments);
+				const float angle1 = start + Pi * float(segment + 1) / float(segments);
+				const auto point = [&](const float angle, const float offset)
+				{
+					return olc::vf4d{
+						(k * GoalCircleRadiusX + offset) * std::cos(angle), lineY,
+						centerZ + (k * GoalCircleRadiusZ + offset) * std::sin(angle) };
+				};
+				AddQuad(points, point(angle0, -halfWidth), point(angle0, halfWidth),
+					point(angle1, halfWidth), point(angle1, -halfWidth),
+					colours, white);
+			}
+		}
 		draw.Mesh(olc::Structure::List, points, colours);
 	}
 }

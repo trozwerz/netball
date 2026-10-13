@@ -48,6 +48,7 @@ namespace netball
 			state.passPressed[1] = (pressed & (1u << 2)) != 0;
 			state.passPressed[2] = (pressed & (1u << 0)) != 0;
 			state.passPressed[3] = (pressed & (1u << 3)) != 0;
+			state.confirmHeld = (info.dwButtons & (1u << 1)) != 0;
 			state.cyclePressed = (pressed & ((1u << 4) | (1u << 5))) != 0;
 			state.backPressed = (pressed & (1u << 8)) != 0;
 			state.startPressed = (pressed & (1u << 9)) != 0;
@@ -107,6 +108,7 @@ namespace netball
 			XINPUT_GAMEPAD_A, XINPUT_GAMEPAD_B, XINPUT_GAMEPAD_X, XINPUT_GAMEPAD_Y };
 		for (std::size_t i = 0; i < 4; ++i)
 			state.passPressed[i] = (pressed & faceButtons[i]) != 0;
+		state.confirmHeld = (pad.wButtons & XINPUT_GAMEPAD_A) != 0;
 		state.cyclePressed = (pressed & (XINPUT_GAMEPAD_LEFT_SHOULDER |
 			XINPUT_GAMEPAD_RIGHT_SHOULDER)) != 0;
 		state.startPressed = (pressed & XINPUT_GAMEPAD_START) != 0;

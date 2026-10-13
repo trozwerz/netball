@@ -27,11 +27,15 @@ int main(const int argc, char* argv[])
 		}
 	}
 
-	// Render scale: 2 = doubled resolution (default); pass --1x for the original.
-	int renderScale = 2;
+	// Render scale: 4 = 10240x6400 (default); --1x/--2x select lower resolutions.
+	int renderScale = 4;
 	for (int i = 1; i < argc; ++i)
+	{
 		if (std::string(argv[i]) == "--1x")
 			renderScale = 1;
+		else if (std::string(argv[i]) == "--2x")
+			renderScale = 2;
+	}
 
 	NetballGame game;
 	if (game.Construct({ 2560 * renderScale, 1600 * renderScale }, { 1, 1 }))

@@ -24,6 +24,12 @@ namespace netball
 	inline constexpr float BallRadius = 0.51f;
 	inline constexpr std::size_t PositionCount = 7;
 
+	// Home wears orange-yellow (a little deeper than the blonde hair texture);
+	// away wears black. The "display" colours are lighter for use on dark panels.
+	inline const olc::Pixel HomeTeamColour(255, 150, 15);
+	inline const olc::Pixel AwayTeamColour(34, 34, 40);
+	inline const olc::Pixel AwayTeamDisplayColour(165, 170, 185);
+
 	struct Position
 	{
 		const char* abbreviation;
@@ -60,6 +66,21 @@ namespace netball
 	inline bool IsInsideGoalCircle(const olc::vf4d& position, const bool positiveEnd)
 	{
 		return GoalCircleMetric(position, positiveEnd) <= 1.0f;
+	}
+
+	// The 2-point zone is the courtside half of the outer 1.9 m band of the circle.
+	inline constexpr float SuperShotRadiusScale = (4.9f - 1.9f) / 4.9f;
+
+	inline bool IsInSuperShotZone(const olc::vf4d& position, const bool positiveEnd)
+	{
+		const float goalLine = positiveEnd ? CourtHalfLength : -CourtHalfLength;
+		const float circleCenterZ = goalLine -
+			std::copysign(GoalCircleCenterInset, goalLine);
+		const bool courtside = positiveEnd
+			? position.z <= circleCenterZ : position.z >= circleCenterZ;
+		const float metric = GoalCircleMetric(position, positiveEnd);
+		return courtside && metric <= 1.0f &&
+			metric > SuperShotRadiusScale * SuperShotRadiusScale;
 	}
 
 	// A shooter already outside the circle may still move toward it.
