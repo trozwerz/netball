@@ -29,21 +29,21 @@ namespace
 		constexpr float radius = PoleHalfWidth;
 		constexpr float bottom = 0.05f;
 		const float top = HoopHeight;
-		// Each 90 degree face shows the lettered middle of the image at its
-		// natural proportions, repeating up the pole.
-		constexpr float uCentre = 0.5f, uHalfSpan = 0.18f;
-		constexpr float tileV = 1.0f;
-		constexpr float tileHeight = 1.77f;
+		// The lettering runs up the pole: image x maps to height and image y
+		// wraps around the pole. Each 90 degree face shows one row of "SXN".
+		constexpr float vCentre = 0.462f, vHalfSpan = 0.0406f;
+		constexpr float uLow = 0.3f, uHigh = 0.7f;
+		const float tileHeight = 2.43f * 0.5f * Pi * radius;
 		std::vector<olc::vf4d> points;
 		std::vector<olc::vf2d> uvs;
 		std::vector<olc::Pixel> colours;
 		const olc::vf4d capCentreTop{ 0.0f, top, goalLine };
 		// Letters appear on all four faces of the pole, centred on the x and z
 		// axes, so they are readable from any camera direction.
-		const auto uAt = [&](const float angle, const float faceMid)
+		const auto vAt = [&](const float angle, const float faceMid)
 		{
 			const float face = std::round(faceMid / (0.5f * Pi));
-			return uCentre - 2.0f * uHalfSpan * (angle - face * 0.5f * Pi) / (0.5f * Pi);
+			return vCentre - 2.0f * vHalfSpan * (angle - face * 0.5f * Pi) / (0.5f * Pi);
 		};
 		for (int i = 0; i < sides; ++i)
 		{
@@ -57,16 +57,16 @@ namespace
 				0.5f, 1.0f);
 			const uint8_t shade = uint8_t(255 * light);
 			const olc::Pixel side(shade, shade, shade);
-			float u0 = uAt(a0, mid), u1 = uAt(a1, mid);
+			float v0 = vAt(a0, mid), v1 = vAt(a1, mid);
 			for (float y = bottom; y < top; y += tileHeight)
 			{
 				const float y1 = std::min(y + tileHeight, top);
-				const float vTop = tileV * (1.0f - (y1 - y) / tileHeight);
+				const float uTop = uLow + (uHigh - uLow) * (y1 - y) / tileHeight;
 				const olc::vf4d a{ x0, y, z0 }, b{ x0, y1, z0 },
 					c{ x1, y1, z1 }, d{ x1, y, z1 };
 				points.insert(points.end(), { a, b, c, a, c, d });
-				uvs.insert(uvs.end(), { { u0, tileV }, { u0, vTop }, { u1, vTop },
-					{ u0, tileV }, { u1, vTop }, { u1, tileV } });
+				uvs.insert(uvs.end(), { { uLow, v0 }, { uTop, v0 }, { uTop, v1 },
+					{ uLow, v0 }, { uTop, v1 }, { uLow, v1 } });
 				colours.insert(colours.end(), 6, side);
 			}
 			points.insert(points.end(), { capCentreTop, { x1, top, z1 }, { x0, top, z0 } });
