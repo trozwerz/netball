@@ -157,6 +157,70 @@ bool NetballGame::OnUserCreate()
 				if (y >= footerStart || visited[index])
 					pixels[index] = olc::Pixel(255, 255, 255, 0);
 			}
+		// Clean the cut-out edge: erode the opaque mask a few pixels so the
+		// light background fringe goes, then give the transparent pixels the
+		// colour of their nearest opaque neighbour so filtering can't blend in
+		// white. The bottom of the picture fades out where the egg mesh stops.
+		{
+			constexpr int erode = 3;
+			std::vector<uint8_t> alpha(size_t(width) * height);
+			for (int i = 0; i < width * height; ++i)
+				alpha[i] = pixels[i].a;
+			std::vector<uint8_t> keep(alpha.size(), 1);
+			for (int y = 0; y < height; ++y)
+				for (int x = 0; x < width; ++x)
+				{
+					bool edge = alpha[y * width + x] == 0;
+					for (int dy = -erode; dy <= erode && !edge; ++dy)
+						for (int dx = -erode; dx <= erode && !edge; ++dx)
+						{
+							const int nx = x + dx, ny = y + dy;
+							edge = nx < 0 || ny < 0 || nx >= width ||
+								ny >= height || alpha[ny * width + nx] == 0;
+						}
+					keep[y * width + x] = edge ? 0 : 1;
+				}
+			for (int y = 0; y < height; ++y)
+			{
+				const float v = float(y) / float(height);
+				const float fade = std::clamp((0.75f - v) / 0.09f, 0.0f, 1.0f);
+				for (int x = 0; x < width; ++x)
+				{
+					olc::Pixel& p = pixels[y * width + x];
+					if (!keep[y * width + x])
+						p.a = 0;
+					else
+						p.a = uint8_t(p.a * fade);
+				}
+			}
+			// Bleed opaque colours outward into transparent pixels.
+			std::vector<uint8_t> coloured(size_t(width) * height);
+			for (int i = 0; i < width * height; ++i)
+				coloured[i] = pixels[i].a > 0 ? 1 : 0;
+			for (int pass = 0; pass < 8; ++pass)
+			{
+				std::vector<olc::Pixel> next(pixels, pixels + size_t(width) * height);
+				std::vector<uint8_t> nextColoured = coloured;
+				for (int y = 1; y < height - 1; ++y)
+					for (int x = 1; x < width - 1; ++x)
+					{
+						if (coloured[y * width + x])
+							continue;
+						for (const int offset : { -1, 1, -width, width })
+						{
+							if (coloured[y * width + x + offset])
+							{
+								const olc::Pixel& n = pixels[y * width + x + offset];
+								next[y * width + x] = olc::Pixel(n.r, n.g, n.b, 0);
+								nextColoured[y * width + x] = 1;
+								break;
+							}
+						}
+					}
+				std::copy(next.begin(), next.end(), pixels);
+				coloured.swap(nextColoured);
+			}
+		}
 		playerTexture.BindCPU();
 
 		playerTextureLoaded = true;

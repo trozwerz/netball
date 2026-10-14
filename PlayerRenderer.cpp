@@ -196,12 +196,12 @@ namespace netball
 			// otherwise the image repeats and the egg grows a second head.
 			for (std::size_t t = 0; t + 2 < uvCache.size(); t += 3)
 			{
-				bool inside = true;
+				bool inside = false;
 				for (std::size_t k = 0; k < 3; ++k)
 				{
 					const olc::vf2d& uv = uvCache[t + k];
-					inside = inside && uv.x >= 0.0f && uv.x <= 1.0f &&
-						uv.y >= 0.0f && uv.y <= 0.75f;
+					inside = inside || (uv.x >= 0.0f && uv.x <= 1.0f &&
+						uv.y >= 0.0f && uv.y <= 0.75f);
 				}
 				if (inside)
 					for (std::size_t k = 0; k < 3; ++k)
