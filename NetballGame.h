@@ -100,7 +100,7 @@ private:
 	float throwDoubleTeamDrop = 0.0f;
 	std::size_t throwDoubleTeamCount = 0;
 	float ComputeDoubleTeam(std::size_t& defenderCount) const;
-	static constexpr float DoubleTeamRadius = 0.8f;
+	static constexpr float DoubleTeamRadius = 1.5f;
 	std::vector<std::size_t> CountNearbyDefenders(std::size_t index, float radius) const;
 	// Defenders already within reach when the receiver caught the ball; nobody
 	// else may close in until the ball is released.
