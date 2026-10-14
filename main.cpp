@@ -40,5 +40,9 @@ int main(const int argc, char* argv[])
 	NetballGame game;
 	if (game.Construct({ 2560 * renderScale, 1600 * renderScale }, { 1, 1 }))
 		game.Start();
-	return 0;
+	// Skip tearing down the multi-hundred-megabyte frame buffers and textures
+	// one by one; the OS reclaims them at once. The log is flushed per event.
+	std::cout.flush();
+	std::cerr.flush();
+	std::_Exit(0);
 }

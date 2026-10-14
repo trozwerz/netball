@@ -2493,33 +2493,6 @@ void NetballGame::UpdateGoalParticles(const float elapsedTime)
 				4.0f });
 	}
 
-	// White particles highlight the courtside super zone: about 64 alive at once
-	// (0.2 s lifetime), spawned at random points inside each zone.
-	if (SuperShotActive() || debugMode)
-	{
-		std::uniform_real_distribution<float> angleRange(0.0f, Pi);
-		std::uniform_real_distribution<float> radiusRange(
-			netball::SuperShotRadiusScale, 1.0f);
-		const float expected = 128.0f / 0.2f * elapsedTime;
-		int count = int(expected);
-		if (unit(randomEngine) < expected - float(count))
-			++count;
-		for (int i = 0; i < count; ++i)
-		{
-			const bool positiveEnd = unit(randomEngine) < 0.5f;
-			const float goalLine = positiveEnd
-				? netball::CourtHalfLength : -netball::CourtHalfLength;
-			const float centerZ = goalLine -
-				std::copysign(netball::GoalCircleCenterInset, goalLine);
-			const float angle = angleRange(randomEngine) + (positiveEnd ? Pi : 0.0f);
-			const float radius = radiusRange(randomEngine);
-			goalParticles.push_back({
-				{ radius * netball::GoalCircleRadiusX * std::cos(angle), 0.05f,
-					centerZ + radius * netball::GoalCircleRadiusZ * std::sin(angle) },
-				{ 0.0f, 0.3f, 0.0f }, olc::Colour::WHITE, 0.2f, 14.0f });
-		}
-	}
-
 	// GS/GA standing in the 2-point zone sparkle in their team colours.
 	if (SuperShotActive() || debugMode)
 	{

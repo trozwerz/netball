@@ -385,10 +385,10 @@ namespace netball
 
 	void DrawSuperShotZone(olc::Draw& draw)
 	{
-		constexpr float lineY = 0.09f;
-		constexpr float halfWidth = 0.18f;
-		constexpr int segments = 32;
-		const olc::Pixel white = olc::Colour::WHITE;
+		// Low enough that player rings and pass markers (y >= 0.04) draw above.
+		constexpr float fillY = 0.02f;
+		constexpr int segments = 48;
+		const olc::Pixel lightBlue(150, 210, 255, 204);
 		std::vector<olc::vf4d> points;
 		std::vector<olc::Pixel> colours;
 		for (const float goalLine : { -CourtHalfLength, CourtHalfLength })
@@ -402,17 +402,18 @@ namespace netball
 			{
 				const float angle0 = start + Pi * float(segment) / float(segments);
 				const float angle1 = start + Pi * float(segment + 1) / float(segments);
-				const auto point = [&](const float angle, const float offset)
+				const auto point = [&](const float angle, const float scale)
 				{
 					return olc::vf4d{
-						(k * GoalCircleRadiusX + offset) * std::cos(angle), lineY,
-						centerZ + (k * GoalCircleRadiusZ + offset) * std::sin(angle) };
+						scale * GoalCircleRadiusX * std::cos(angle), fillY,
+						centerZ + scale * GoalCircleRadiusZ * std::sin(angle) };
 				};
-				AddQuad(points, point(angle0, -halfWidth), point(angle0, halfWidth),
-					point(angle1, halfWidth), point(angle1, -halfWidth),
-					colours, white);
+				AddQuad(points, point(angle0, k), point(angle0, 1.0f),
+					point(angle1, 1.0f), point(angle1, k),
+					colours, lightBlue);
 			}
 		}
+		draw.SetBlendMode(olc::BlendMode::Alpha);
 		draw.Mesh(olc::Structure::List, points, colours);
 	}
 }
