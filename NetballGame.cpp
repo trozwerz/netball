@@ -1261,6 +1261,8 @@ void NetballGame::StartPassOption(const std::size_t option)
 
 void NetballGame::StartPassToPlayer(const std::size_t playerIndex)
 {
+	if (throwInPending)
+		return;
 	passReceiver = playerIndex;
 	if (passReceiver >= netball::PlayerCount)
 	{
