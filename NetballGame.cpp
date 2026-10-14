@@ -1319,6 +1319,7 @@ void NetballGame::StartPassToPlayer(const std::size_t playerIndex)
 	passDuration = std::max(0.35f, std::sqrt(dx * dx + dz * dz) / 9.0f);
 	shotInFlight = false;
 	passInFlight = true;
+	throwDoubleTeamDrop = ComputeDoubleTeam(throwDoubleTeamCount);
 	catchBlendRemaining = 0.0f;
 	aiNoReceiverLogged = false;
 	playerVelocity = {};
@@ -1939,20 +1940,14 @@ void NetballGame::UpdatePassing(const float elapsedTime)
 		// by the average defence rating of the two closest defenders.
 		float doubleTeamDrop = 0.0f;
 		std::size_t doubleTeamDefenderCount = 0;
-		for (const std::size_t end : { ballCarrier, passReceiver })
+		doubleTeamDrop = ComputeDoubleTeam(doubleTeamDefenderCount);
+		if (throwDoubleTeamDrop > doubleTeamDrop)
 		{
-			const std::vector<std::size_t> nearby =
-				CountNearbyDefenders(end, DoubleTeamRadius);
-			if (nearby.size() >= 2)
-			{
-				doubleTeamDefenderCount = std::max(
-					doubleTeamDefenderCount, nearby.size());
-				const float defence = 0.5f * float(
-					profiles[nearby[0]].defence + profiles[nearby[1]].defence);
-				doubleTeamDrop = std::max(doubleTeamDrop,
-					0.30f * defence / 3.0f);
-			}
+			doubleTeamDrop = throwDoubleTeamDrop;
+			doubleTeamDefenderCount = throwDoubleTeamCount;
 		}
+		throwDoubleTeamDrop = 0.0f;
+		throwDoubleTeamCount = 0;
 		if (doubleTeamDefenderCount > 0)
 			LogEvent("DOUBLE_TEAM_PASS defenders=" +
 				std::to_string(doubleTeamDefenderCount) +
@@ -2663,6 +2658,27 @@ std::vector<std::size_t> NetballGame::CountNearbyDefenders(
 	for (const auto& entry : found)
 		result.push_back(entry.second);
 	return result;
+}
+
+float NetballGame::ComputeDoubleTeam(std::size_t& defenderCount) const
+{
+	float drop = 0.0f;
+	defenderCount = 0;
+	for (const std::size_t end : { ballCarrier, passReceiver })
+	{
+		if (end >= players.size())
+			continue;
+		const std::vector<std::size_t> nearby =
+			CountNearbyDefenders(end, DoubleTeamRadius);
+		if (nearby.size() >= 2)
+		{
+			defenderCount = std::max(defenderCount, nearby.size());
+			const float defence = 0.5f * float(
+				profiles[nearby[0]].defence + profiles[nearby[1]].defence);
+			drop = std::max(drop, 0.30f * defence / 3.0f);
+		}
+	}
+	return drop;
 }
 
 void NetballGame::EnforceDefenderLock()
