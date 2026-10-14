@@ -246,11 +246,14 @@ bool NetballGame::OnUserCreate()
 				sample(cell, 0.40f, 0.04f, 0.60f, 0.12f, crown);
 				for (int c = 0; c < 3; ++c)
 					skin[c] = (cheekLeft[c] + cheekRight[c] + forehead[c]) / 3.0f;
-				// A bluish crown sample is the stadium background (short hair).
-				if (crown[2] < crown[0] + 10.0f)
+				// Hair is warm or dark (r >= g >= b); anything else is background.
+				if (crown[0] >= crown[1] - 3.0f && crown[1] >= crown[2] - 3.0f &&
+					crown[0] < 235.0f)
 					for (int c = 0; c < 3; ++c)
 						hair[c] = crown[c];
 			}
+			playerHair[slot] = olc::Pixel(uint8_t(hair[0]), uint8_t(hair[1]),
+				uint8_t(hair[2]));
 			texturesOk = CreateImage(playerTextures[slot], baseSize, playerConfig);
 			if (!texturesOk)
 				break;
@@ -297,6 +300,38 @@ bool NetballGame::OnUserCreate()
 			playerTextures[slot].BindCPU();
 		}
 		playerTextureLoaded = texturesOk;
+
+		// Recolour each portrait's magenta jersey to its team's egg colour.
+		if (portraitSheetLoaded)
+		{
+			olc::Pixel* sheetPixels = portraitSheet.Data();
+			for (std::size_t slot = 0; slot < profiles.size() && slot < 18; ++slot)
+			{
+				const bool home = slot < 7 || (slot >= 14 && slot < 16);
+				const olc::Pixel team = home ? netball::HomeTeamColour
+					: netball::AwayTeamColour;
+				const int cell = std::clamp(profiles[slot].portrait, 0, 99);
+				const int x0 = cell % 10 * sheetSize.x / 10;
+				const int x1 = (cell % 10 + 1) * sheetSize.x / 10;
+				const int y0 = cell / 10 * sheetSize.y / 10;
+				const int y1 = (cell / 10 + 1) * sheetSize.y / 10;
+				for (int y = y0; y < y1; ++y)
+					for (int x = x0; x < x1; ++x)
+					{
+						olc::Pixel& p = sheetPixels[y * sheetSize.x + x];
+						if (p.r > 110 && p.b > 90 && p.g < 0.6f * p.r &&
+							p.g < 0.7f * p.b && std::abs(int(p.r) - int(p.b)) < 90)
+						{
+							const float shade = (0.299f * p.r + 0.587f * p.g +
+								0.114f * p.b) / 150.0f;
+							p.r = uint8_t(std::clamp(team.r * shade, 0.0f, 255.0f));
+							p.g = uint8_t(std::clamp(team.g * shade, 0.0f, 255.0f));
+							p.b = uint8_t(std::clamp(team.b * shade, 0.0f, 255.0f));
+						}
+					}
+			}
+			portraitSheet.BindCPU();
+		}
 	}
 
 	projection.perspective(25.0f * Pi / 180.0f,
@@ -2805,7 +2840,8 @@ void NetballGame::DrawScene()
 	}
 	netball::DrawPlayers(draw, players, selectedPlayer,
 		zPassTarget, xPassTarget, cPassTarget,
-		playerTextureLoaded ? playerTextures.data() : nullptr, substitutes);
+		playerTextureLoaded ? playerTextures.data() : nullptr, substitutes,
+		playerHair.data());
 	if (debugMode || (!demoActive && !IsAIAttacking()))
 		netball::DrawPassTargetLabels(draw, players, passTargets,
 			ActivePlatform(), ScreenSize());

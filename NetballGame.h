@@ -51,6 +51,7 @@ private:
 	olc::Image splashImage;
 	olc::Image ballTexture;
 	olc::Image playerBase;
+	std::array<olc::Pixel, 18> playerHair{};
 	std::array<olc::Image, 18> playerTextures;
 	bool playerTextureLoaded = false;
 	float ballSpinAngle = 0.0f;

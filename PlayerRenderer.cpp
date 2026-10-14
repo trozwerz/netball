@@ -155,8 +155,9 @@ namespace netball
 	void DrawPlayers(olc::Draw& draw, const Teams& teamPlayers,
 		const std::size_t selectedPlayer, const std::size_t zPassTarget,
 		const std::size_t xPassTarget, const std::size_t cPassTarget,
-		olc::Image* textures, const std::vector<Player>& extras)
-	{
+		olc::Image* textures, 		const std::vector<Player>& extras,
+				const olc::Pixel* hairColours)
+			{
 		// Substitutes are drawn like players, after the on-court ones.
 		std::vector<Player> players(teamPlayers.begin(), teamPlayers.end());
 		players.insert(players.end(), extras.begin(), extras.end());
@@ -220,19 +221,25 @@ namespace netball
 			const float centerY = (3.44f + 0.06f) * 0.5f;
 			const olc::Pixel teamColour = player.homeTeam
 				? HomeTeamColour : AwayTeamColour;
+			const olc::Pixel hairColour = hairColours && i < 18
+				? hairColours[i] : teamColour;
 			for (std::size_t v = 0; v < eggMesh.size(); ++v)
 			{
 				const olc::vf4d& vertex = eggMesh[v];
 				const float brightness = brightnessCache[v];
+				// Top 10% of the egg's height takes the hair colour.
+				const olc::Pixel baseColour =
+					vertex.y > 0.8f * (3.44f - 0.06f) * 0.5f
+					? hairColour : teamColour;
 				points.push_back({
 					vertex.x + player.position.x,
 					vertex.y + centerY + player.position.y,
 					vertex.z + player.position.z
 				});
 				colours.push_back(olc::Pixel(
-					uint8_t(teamColour.r * brightness),
-					uint8_t(teamColour.g * brightness),
-					uint8_t(teamColour.b * brightness)));
+					uint8_t(baseColour.r * brightness),
+					uint8_t(baseColour.g * brightness),
+					uint8_t(baseColour.b * brightness)));
 			}
 		}
 		draw.Mesh(olc::Structure::List, points, colours);
