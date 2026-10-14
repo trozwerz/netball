@@ -87,6 +87,7 @@ private:
 	static constexpr float GameOverHoldSeconds = 1.0f;
 	float gameOverHold = 0.0f;
 	void DrawGameOver();
+	void DrawLeaderCards(float top);
 	std::uint64_t frameNumber = 0;
 	std::size_t homeScore = 0;
 	std::size_t awayScore = 0;

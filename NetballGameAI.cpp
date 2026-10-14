@@ -130,27 +130,14 @@ void NetballGame::RefreshPassTargets()
 	const netball::Player& carrier = players[ballCarrier];
 	const float sign = carrier.homeTeam ? 1.0f : -1.0f;
 	const float carrierProgress = carrier.position.z * sign;
-	passTargets.fill(netball::PlayerCount);
 
-	// Teammates ordered by progress toward the hoop, nearest ahead first.
-	std::array<std::pair<float, std::size_t>, netball::TeamSize - 1> ahead{};
-	std::size_t aheadCount = 0;
-	for (std::size_t i = 0; i < players.size(); ++i)
-	{
-		if (i == ballCarrier || players[i].homeTeam != carrier.homeTeam)
-			continue;
-		const float progress = players[i].position.z * sign;
-		if (progress > carrierProgress)
-			ahead[aheadCount++] = { progress, i };
-	}
-	std::sort(ahead.begin(), ahead.begin() + aheadCount,
-		[](const auto& left, const auto& right) { return left.first < right.first; });
-	if (aheadCount > 0)
-		passTargets[0] = ahead[0].second;
-	if (aheadCount > 1)
-		passTargets[1] = ahead[1].second;
+	// Assignments persist: a button keeps its player until that player takes
+	// the ball or possession changes team.
+	for (std::size_t& target : passTargets)
+		if (target >= players.size() || target == ballCarrier ||
+			players[target].homeTeam != carrier.homeTeam)
+			target = netball::PlayerCount;
 
-	// C: closest unassigned teammate. V: closest unassigned one behind the carrier.
 	const auto isAssigned = [&](const std::size_t index)
 	{
 		for (const std::size_t target : passTargets)
@@ -158,30 +145,54 @@ void NetballGame::RefreshPassTargets()
 				return true;
 		return false;
 	};
-	const auto closestUnassigned = [&](const bool mustBeBehind)
+	const auto distanceFromCarrier = [&](const std::size_t index)
 	{
-		std::size_t best = netball::PlayerCount;
-		float bestDistance = std::numeric_limits<float>::max();
+		const float dx = players[index].position.x - carrier.position.x;
+		const float dz = players[index].position.z - carrier.position.z;
+		return dx * dx + dz * dz;
+	};
+
+	// The last button goes to the unassigned teammate furthest from the ball.
+	if (passTargets[3] >= netball::PlayerCount)
+	{
+		float bestDistance = -1.0f;
 		for (std::size_t i = 0; i < players.size(); ++i)
 		{
 			if (i == ballCarrier || players[i].homeTeam != carrier.homeTeam ||
 				isAssigned(i))
 				continue;
-			if (mustBeBehind && players[i].position.z * sign >= carrierProgress)
-				continue;
-			const float dx = players[i].position.x - carrier.position.x;
-			const float dz = players[i].position.z - carrier.position.z;
-			const float distance = dx * dx + dz * dz;
-			if (distance < bestDistance)
+			const float distance = distanceFromCarrier(i);
+			if (distance > bestDistance)
 			{
 				bestDistance = distance;
+				passTargets[3] = i;
+			}
+		}
+	}
+
+	// Other free buttons go to players without one, preferring those nearer
+	// the post than the passer (closest to the passer first).
+	for (std::size_t slot = 0; slot < 3; ++slot)
+	{
+		if (passTargets[slot] < netball::PlayerCount)
+			continue;
+		std::size_t best = netball::PlayerCount;
+		float bestScore = std::numeric_limits<float>::max();
+		for (std::size_t i = 0; i < players.size(); ++i)
+		{
+			if (i == ballCarrier || players[i].homeTeam != carrier.homeTeam ||
+				isAssigned(i))
+				continue;
+			const bool ahead = players[i].position.z * sign > carrierProgress;
+			const float score = distanceFromCarrier(i) + (ahead ? 0.0f : 10000.0f);
+			if (score < bestScore)
+			{
+				bestScore = score;
 				best = i;
 			}
 		}
-		return best;
-	};
-	passTargets[2] = closestUnassigned(false);
-	passTargets[3] = closestUnassigned(true);
+		passTargets[slot] = best;
+	}
 
 	for (std::size_t i = 0; i < players.size(); ++i)
 	{

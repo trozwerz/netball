@@ -601,6 +601,13 @@ bool NetballGame::OnUserUpdate(const float elapsedTime)
 	if (clockRemaining <= 0.0f)
 	{
 		clockRemaining = 0.0f;
+		// A shot already in the air is allowed to finish (goal, miss or landing).
+		if (shotInFlight || (looseBall && reboundMarkerActive))
+		{
+			// fall through: play continues until the shot is resolved
+		}
+		else
+		{
 		LogEvent("GAME_OVER score=" + std::to_string(homeScore) + "-" +
 			std::to_string(awayScore) + (demoActive ? " demo=1" : ""));
 		if (demoActive)
@@ -615,6 +622,7 @@ bool NetballGame::OnUserUpdate(const float elapsedTime)
 			return true;
 		}
 		gameOver = true;
+		}
 	}
 	if (passInFlight || shotInFlight || looseBall)
 		ballSpinAngle = std::fmod(ballSpinAngle + 3.0f * elapsedTime, 2.0f * Pi);
@@ -959,6 +967,24 @@ void NetballGame::UpdatePlayers(const float elapsedTime)
 	if (wasShotInFlight && !shotInFlight)
 		return;
 	UpdateShootingMeter(elapsedTime);
+
+	if (!aiAttackMode && !demoActive && !looseBall && !passInFlight &&
+		!players[ballCarrier].homeTeam &&
+		(keyboard.GetKey(olc::Key::X).bPressed || pad.passPressed[1]))
+	{
+		std::size_t goalkeeper = netball::PlayerCount;
+		for (std::size_t i = 0; i < players.size(); ++i)
+			if (players[i].homeTeam && players[i].role == 6)
+				goalkeeper = i;
+		if (goalkeeper < netball::PlayerCount)
+		{
+			playerVelocity = {};
+			if (selectedPlayer == goalkeeper)
+				SelectPlayerForPossession();
+			else
+				selectedPlayer = goalkeeper;
+		}
+	}
 
 	if (!passInFlight && !shootingMeterActive &&
 		players[ballCarrier].homeTeam && !aiAttackMode &&
@@ -1327,6 +1353,8 @@ void NetballGame::StartPassToPlayer(const std::size_t playerIndex)
 	passDuration = std::max(0.35f, std::sqrt(dx * dx + dz * dz) / 9.0f);
 	shotInFlight = false;
 	passInFlight = true;
+	lockedDefenders = CountNearbyDefenders(passReceiver, DoubleTeamRadius);
+	defenderLockActive = true;
 	throwDoubleTeamDrop = ComputeDoubleTeam(throwDoubleTeamCount);
 	catchBlendRemaining = 0.0f;
 	aiNoReceiverLogged = false;
@@ -1609,61 +1637,80 @@ void NetballGame::DrawGameOver()
 		topLeft.y + 60.0f + titleSize.y },
 		score, olc::Colour::WHITE, scoreScale);
 	DrawConfirmPrompt("to continue", gameOverHold / GameOverHoldSeconds);
+	DrawLeaderCards(topLeft.y + height + 20.0f);
+}
 
-	// Top scorer, assister and turnover winner, each with portrait and stats.
+void NetballGame::DrawLeaderCards(const float top)
+{
+	const olc::vf2d screen = UiScreenSize();
 	struct Leader { const char* title; std::size_t index; int value; };
-	std::array<Leader, 3> leaders{ {
-		{ "TOP SCORER", 0, 0 }, { "TOP ASSIST", 0, 0 }, { "TOP TURNOVERS", 0, 0 } } };
-	for (std::size_t i = 0; i < profiles.size(); ++i)
+	const auto isHomeProfile = [](const std::size_t i)
 	{
-		const int values[3] = { profiles[i].goals, profiles[i].assists,
-			profiles[i].turnovers };
-		for (std::size_t k = 0; k < 3; ++k)
-			if (values[k] > leaders[k].value)
-			{
-				leaders[k].value = values[k];
-				leaders[k].index = i;
-			}
-	}
-	constexpr float cardWidth = 520.0f, cardHeight = 230.0f, gap = 30.0f;
+		return i < netball::TeamSize || i == 14 || i == 15;
+	};
+	constexpr float cardWidth = 520.0f, cardHeight = 200.0f, gap = 24.0f;
 	const float rowWidth = 3.0f * cardWidth + 2.0f * gap;
 	const float rowLeft = (screen.x - rowWidth) * 0.5f;
-	const float rowTop = topLeft.y + height + 40.0f;
-	for (std::size_t k = 0; k < 3; ++k)
+	for (std::size_t team = 0; team < 2; ++team)
 	{
-		const olc::vf2d origin{ rowLeft + float(k) * (cardWidth + gap), rowTop };
-		UiFilledRect(origin, { cardWidth, cardHeight }, olc::Pixel(0, 0, 0, 215));
-		UiString({ origin.x + 24.0f, origin.y + 14.0f }, leaders[k].title,
-			olc::Pixel(255, 215, 90), { 3.0f, 3.0f });
-		if (leaders[k].value <= 0)
+		const bool home = team == 0;
+		std::array<Leader, 3> leaders{ {
+			{ "TOP SCORER", 0, 0 }, { "TOP ASSIST", 0, 0 },
+			{ "TOP TURNOVERS", 0, 0 } } };
+		for (std::size_t i = 0; i < profiles.size(); ++i)
 		{
-			UiString({ origin.x + 24.0f, origin.y + 100.0f }, "NONE",
-				olc::Pixel(180, 180, 180), { 4.0f, 4.0f });
-			continue;
+			if (isHomeProfile(i) != home)
+				continue;
+			const int values[3] = { profiles[i].goals, profiles[i].assists,
+				profiles[i].turnovers };
+			for (std::size_t k = 0; k < 3; ++k)
+				if (values[k] > leaders[k].value)
+				{
+					leaders[k].value = values[k];
+					leaders[k].index = i;
+				}
 		}
-		const netball::PlayerProfile& profile = profiles[leaders[k].index];
-		float textLeft = origin.x + 24.0f;
-		if (portraitSheetLoaded)
+		const float rowTop = top + float(team) * (cardHeight + gap);
+		const olc::Pixel teamColour = home
+			? netball::HomeTeamColour : netball::AwayTeamDisplayColour;
+		for (std::size_t k = 0; k < 3; ++k)
 		{
-			const int cell = std::clamp(profile.portrait, 0, 99);
-			const float u0 = float(cell % 10) / 10.0f, v0 = float(cell / 10) / 10.0f;
-			const olc::ImageRegion region(portraitSheet, { u0, v0 },
-				{ u0 + 0.1f, v0 }, { u0, v0 + 0.1f }, { u0 + 0.1f, v0 + 0.1f });
-			draw.SetBlendMode(olc::BlendMode::Alpha);
-			draw.ImageRect(region, (origin + olc::vf2d{ 24.0f, 60.0f }) * uiScale,
-				olc::vf2d{ 150.0f, 150.0f } * uiScale);
-			textLeft += 170.0f;
+			const olc::vf2d origin{ rowLeft + float(k) * (cardWidth + gap), rowTop };
+			UiFilledRect(origin, { cardWidth, cardHeight }, olc::Pixel(0, 0, 0, 215));
+			UiFilledRect(origin, { 10.0f, cardHeight }, teamColour);
+			UiString({ origin.x + 28.0f, origin.y + 10.0f },
+				std::string(home ? "HOME " : "AWAY ") + leaders[k].title,
+				olc::Pixel(255, 215, 90), { 2.6f, 2.6f });
+			if (leaders[k].value <= 0)
+			{
+				UiString({ origin.x + 28.0f, origin.y + 85.0f }, "NONE",
+					olc::Pixel(180, 180, 180), { 4.0f, 4.0f });
+				continue;
+			}
+			const netball::PlayerProfile& profile = profiles[leaders[k].index];
+			float textLeft = origin.x + 28.0f;
+			if (portraitSheetLoaded)
+			{
+				const int cell = std::clamp(profile.portrait, 0, 99);
+				const float u0 = float(cell % 10) / 10.0f, v0 = float(cell / 10) / 10.0f;
+				const olc::ImageRegion region(portraitSheet, { u0, v0 },
+					{ u0 + 0.1f, v0 }, { u0, v0 + 0.1f }, { u0 + 0.1f, v0 + 0.1f });
+				draw.SetBlendMode(olc::BlendMode::Alpha);
+				draw.ImageRect(region, (origin + olc::vf2d{ 28.0f, 45.0f }) * uiScale,
+					olc::vf2d{ 135.0f, 135.0f } * uiScale);
+				textLeft += 155.0f;
+			}
+			UiString({ textLeft, origin.y + 55.0f }, profile.name,
+				olc::Colour::WHITE, { 4.0f, 4.0f });
+			UiString({ textLeft, origin.y + 105.0f },
+				"G " + std::to_string(profile.goals) +
+				"  A " + std::to_string(profile.assists),
+				olc::Colour::WHITE, { 3.0f, 3.0f });
+			UiString({ textLeft, origin.y + 142.0f },
+				"R " + std::to_string(profile.rebounds) +
+				"  T " + std::to_string(profile.turnovers),
+				olc::Colour::WHITE, { 3.0f, 3.0f });
 		}
-		UiString({ textLeft, origin.y + 70.0f }, profile.name,
-			olc::Colour::WHITE, { 4.0f, 4.0f });
-		UiString({ textLeft, origin.y + 125.0f },
-			"G " + std::to_string(profile.goals) +
-			"  A " + std::to_string(profile.assists),
-			olc::Colour::WHITE, { 3.0f, 3.0f });
-		UiString({ textLeft, origin.y + 165.0f },
-			"R " + std::to_string(profile.rebounds) +
-			"  T " + std::to_string(profile.turnovers),
-			olc::Colour::WHITE, { 3.0f, 3.0f });
 	}
 }
 
@@ -2754,13 +2801,18 @@ void NetballGame::EnforceDefenderLock()
 			}
 		}
 
-	if (!defenderLockActive || passInFlight || looseBall ||
-		ballCarrier >= players.size() || throwInPending)
+	if (!defenderLockActive || looseBall || throwInPending ||
+		ballCarrier >= players.size())
 		return;
-	const olc::vf4d centre = players[ballCarrier].position;
+	const bool flying = passInFlight && !shotInFlight &&
+		passReceiver < players.size();
+	if (passInFlight && !flying)
+		return;
+	const std::size_t lockCentre = flying ? passReceiver : ballCarrier;
+	const olc::vf4d centre = players[lockCentre].position;
 	for (std::size_t i = 0; i < players.size(); ++i)
 	{
-		if (players[i].homeTeam == players[ballCarrier].homeTeam ||
+		if (players[i].homeTeam == players[lockCentre].homeTeam ||
 			std::find(lockedDefenders.begin(), lockedDefenders.end(), i) !=
 				lockedDefenders.end())
 			continue;
@@ -2812,7 +2864,7 @@ void NetballGame::DrawPlayerPanel()
 	const netball::PlayerProfile& profile = profiles[selectedPlayer];
 	const olc::vf2d screen = UiScreenSize();
 	const float panelHeight = 190.0f;
-	const olc::vf2d origin{ 30.0f, screen.y - panelHeight - 30.0f };
+	const olc::vf2d origin{ 30.0f, 30.0f };
 	UiFilledRect(origin, { 560.0f, panelHeight }, olc::Pixel(0, 0, 0, 170));
 	const olc::Pixel teamColour = player.homeTeam
 		? netball::HomeTeamColour : netball::AwayTeamDisplayColour;
@@ -3007,6 +3059,17 @@ void NetballGame::DrawScene()
 	if (debugMode || (!demoActive && !IsAIAttacking()))
 		netball::DrawPassTargetLabels(draw, players, passTargets,
 			ActivePlatform(), ScreenSize());
+	else if (!demoActive && !aiAttackMode && !gameOver && !looseBall)
+	{
+		// Defending: the second option button takes control of the goalkeeper.
+		std::array<std::size_t, 4> gkTarget{ netball::PlayerCount,
+			netball::PlayerCount, netball::PlayerCount, netball::PlayerCount };
+		for (std::size_t i = 0; i < players.size(); ++i)
+			if (players[i].homeTeam && players[i].role == 6)
+				gkTarget[1] = i;
+		netball::DrawPassTargetLabels(draw, players, gkTarget,
+			ActivePlatform(), ScreenSize());
+	}
 	netball::DrawBall(draw, ballPosition, ballTexture, ballSpinAngle,
 		passInFlight || looseBall);
 	DrawGoalParticles();
@@ -3033,12 +3096,16 @@ void NetballGame::DrawHud()
 		clockTotal / 60, clockTotal % 60);
 	const olc::vf2d clockScale{ 4.0f, 4.0f };
 	const olc::vf2d clockSize = UiTextSize(clockText, clockScale);
-	const float statsWidth = std::max({ scoreboardSize.x, turnoversSize.x,
+	const float swatchSize = scoreboardSize.y * 0.75f;
+	const float swatchGap = 16.0f;
+	const float scoreboardWidth =
+		scoreboardSize.x + 2.0f * (swatchSize + swatchGap);
+	const float statsWidth = std::max({ scoreboardWidth, turnoversSize.x,
 		clockSize.x });
 	const float boardHeight = scoreboardSize.y + turnoversSize.y +
 		clockSize.y + 40.0f;
 	const olc::vf2d scoreboardPosition{
-		(screen.x - scoreboardSize.x) * 0.5f,
+		(screen.x - scoreboardWidth) * 0.5f + swatchSize + swatchGap,
 		250.0f - boardHeight
 	};
 	const float statsTop = scoreboardPosition.y + scoreboardSize.y + 8.0f;
@@ -3051,6 +3118,21 @@ void NetballGame::DrawHud()
 	}, Shade(10, 22, 35));
 	UiString(scoreboardPosition, scoreboard, olc::Colour::WHITE,
 		scoreboardScale);
+	{
+		const float swatchY = scoreboardPosition.y +
+			(scoreboardSize.y - swatchSize) * 0.5f;
+		const auto drawSwatch = [&](const float x, const olc::Pixel colour)
+		{
+			UiFilledRect({ x, swatchY }, { swatchSize, swatchSize },
+				olc::Colour::WHITE);
+			UiFilledRect({ x + 3.0f, swatchY + 3.0f },
+				{ swatchSize - 6.0f, swatchSize - 6.0f }, colour);
+		};
+		drawSwatch(scoreboardPosition.x - swatchSize - swatchGap,
+			netball::HomeTeamColour);
+		drawSwatch(scoreboardPosition.x + scoreboardSize.x + swatchGap,
+			netball::AwayTeamColour);
+	}
 	UiString({
 		(screen.x - turnoversSize.x) * 0.5f,
 		statsTop
@@ -3195,7 +3277,7 @@ void NetballGame::DrawPauseMenu()
 	for (const std::string& item : items)
 		width = std::max(width, UiTextSize("> " + item, itemScale).x);
 	const float height = lineHeight * float(items.size() + 2);
-	const olc::vf2d topLeft{ (screen.x - width) * 0.5f, (screen.y - height) * 0.5f };
+	const olc::vf2d topLeft{ (screen.x - width) * 0.5f, 300.0f };
 	UiFilledRect(topLeft - olc::vf2d{ 40.0f, 30.0f },
 		olc::vf2d{ width + 80.0f, height + 90.0f }, olc::Pixel(0, 0, 0, 200));
 	UiString({ (screen.x - UiTextSize("PAUSED", titleScale).x) * 0.5f, topLeft.y },
@@ -3207,4 +3289,5 @@ void NetballGame::DrawPauseMenu()
 			(selected ? "> " : "  ") + items[i],
 			selected ? Shade(255, 205, 70) : olc::Colour::WHITE, itemScale);
 	}
+	DrawLeaderCards(topLeft.y + height + 90.0f);
 }
