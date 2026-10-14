@@ -96,7 +96,7 @@ private:
 	bool portraitSheetLoaded = false;
 	// Players within the 0.5 m double-team radius of the ball carrier.
 	std::vector<std::size_t> doubleTeamed;
-	static constexpr float DoubleTeamRadius = 0.5f;
+	static constexpr float DoubleTeamRadius = 0.8f;
 	std::vector<std::size_t> CountNearbyDefenders(std::size_t index, float radius) const;
 	// Defenders already within reach when the receiver caught the ball; nobody
 	// else may close in until the ball is released.
