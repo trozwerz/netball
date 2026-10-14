@@ -2445,6 +2445,17 @@ void NetballGame::UpdateGoalParticles(const float elapsedTime)
 		ballCarrier < players.size() &&
 		CountNearbyDefenders(ballCarrier, DoubleTeamRadius).size() >= 2)
 		doubleTeamed.push_back(ballCarrier);
+	if (doubleTeamed.empty())
+	{
+		if (loggedDoubleTeam != static_cast<std::size_t>(-1))
+			LogEvent("DOUBLE_TEAM_END");
+		loggedDoubleTeam = static_cast<std::size_t>(-1);
+	}
+	else if (loggedDoubleTeam != doubleTeamed[0])
+	{
+		loggedDoubleTeam = doubleTeamed[0];
+		LogEvent("DOUBLE_TEAM_START carrier=" + profiles[loggedDoubleTeam].name);
+	}
 	for (std::size_t team = 0; team < cheerRemaining.size(); ++team)
 	{
 		const bool cheering = cheerRemaining[team] > 0.0f;
