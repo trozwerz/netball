@@ -125,6 +125,16 @@ private:
 	std::size_t homeMissedShots = 0;
 	std::size_t awayMissedShots = 0;
 	// Pass options Z, X, C, V (keyboard) / A, B, X, Y (gamepad).
+	// When defending they select the GK, C, GD and WD respectively.
+	static constexpr std::array<std::size_t, 4> DefenceRoles{ 6, 3, 5, 4 };
+	bool defenderSelectionKept = false;
+	float superStreamAngle = 0.0f;
+	olc::Image starImage;
+	bool starLoaded = false;
+	void DrawStars(const olc::vf2d& position, int rating, float starSize);
+	void DrawRatingGrid(const olc::vf2d& origin,
+		const netball::PlayerProfile& profile, float starSize,
+		float textScale, float columnWidth, float rowHeight);
 	std::array<std::size_t, 4> passTargets{
 		netball::PlayerCount, netball::PlayerCount,
 		netball::PlayerCount, netball::PlayerCount
