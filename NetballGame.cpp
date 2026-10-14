@@ -2687,6 +2687,40 @@ float NetballGame::ComputeDoubleTeam(std::size_t& defenderCount) const
 
 void NetballGame::EnforceDefenderLock()
 {
+	// Pull apart opposing players that have ended up almost on top of each
+	// other (e.g. after a respawn) so neither stays frozen in place.
+	for (std::size_t a = 0; a < players.size(); ++a)
+		for (std::size_t b = a + 1; b < players.size(); ++b)
+		{
+			if (players[a].homeTeam == players[b].homeTeam)
+				continue;
+			float dx = players[b].position.x - players[a].position.x;
+			float dz = players[b].position.z - players[a].position.z;
+			const float distance = std::sqrt(dx * dx + dz * dz);
+			constexpr float minimum = 0.35f;
+			if (distance >= minimum)
+				continue;
+			if (distance < 0.001f)
+			{
+				dx = 1.0f;
+				dz = 0.0f;
+			}
+			else
+			{
+				dx /= distance;
+				dz /= distance;
+			}
+			const float push = 0.5f * std::min(0.02f, minimum - distance);
+			for (const auto& [index, sign] : { std::pair{ a, -1.0f }, std::pair{ b, 1.0f } })
+			{
+				olc::vf4d candidate = players[index].position;
+				candidate.x += sign * dx * push;
+				candidate.z += sign * dz * push;
+				if (netball::IsLegalPosition(players[index], candidate))
+					players[index].position = candidate;
+			}
+		}
+
 	if (!defenderLockActive || passInFlight || looseBall ||
 		ballCarrier >= players.size() || throwInPending)
 		return;

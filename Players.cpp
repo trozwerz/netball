@@ -60,7 +60,17 @@ namespace netball
 			const float dx = position.x - players[i].position.x;
 			const float dz = position.z - players[i].position.z;
 			if (std::abs(dx) < minSeparation && std::abs(dz) < minSeparation)
+			{
+				// Already overlapping: let the mover step away, never deeper.
+				const float currentDx = players[movingPlayer].position.x - players[i].position.x;
+				const float currentDz = players[movingPlayer].position.z - players[i].position.z;
+				const float currentSeparation =
+					std::max(std::abs(currentDx), std::abs(currentDz));
+				if (currentSeparation < minSeparation &&
+					std::max(std::abs(dx), std::abs(dz)) > currentSeparation)
+					continue;
 				return true;
+			}
 		}
 		return false;
 	}
