@@ -256,63 +256,10 @@ void NetballGame::UpdateTeammateMovement(const float elapsedTime)
 				delayedPosition.z - players[playerIndex].position.z
 			};
 			const float distance = toMarked.mag();
-			float markingDistance = MarkingDistance;
-			// A second defender close to the ball carrier joins the first,
-			// and both squeeze in to double-team range.
-			if (ballCarrier < players.size() && !passInFlight && !looseBall)
-			{
-				const std::size_t carrierMarkerRole =
-					MarkedRoles[carrier.role];
-				std::size_t carrierMarker = netball::PlayerCount;
-				std::size_t helper = netball::PlayerCount;
-				float helperDistance = 2.5f;
-				for (std::size_t i = 0; i < players.size(); ++i)
-				{
-					if (players[i].homeTeam == carrier.homeTeam)
-						continue;
-					if (MarkedRoles[players[i].role] == carrier.role)
-					{
-						carrierMarker = i;
-						continue;
-					}
-					const float d = std::hypot(
-						players[i].position.x - carrier.position.x,
-						players[i].position.z - carrier.position.z);
-					if (d < helperDistance)
-					{
-						helperDistance = d;
-						helper = i;
-					}
-				}
-				(void)carrierMarkerRole;
-				if (helper < netball::PlayerCount &&
-					carrierMarker < netball::PlayerCount &&
-					(playerIndex == helper || playerIndex == carrierMarker))
-				{
-					markingDistance = 0.7f;
-					if (playerIndex == helper)
-					{
-						const olc::vf2d toCarrier{
-							carrier.position.x - players[playerIndex].position.x,
-							carrier.position.z - players[playerIndex].position.z
-						};
-						const float carrierDistance = toCarrier.mag();
-						if (carrierDistance > markingDistance)
-						{
-							const float step = std::min(
-								teammateSpeed * elapsedTime,
-								carrierDistance - markingDistance);
-							MovePlayer(playerIndex,
-								toCarrier * (step / carrierDistance), false);
-						}
-						continue;
-					}
-				}
-			}
-			if (distance > markingDistance)
+			if (distance > MarkingDistance)
 			{
 				const float moveDistance = std::min(
-					teammateSpeed * elapsedTime, distance - markingDistance);
+					teammateSpeed * elapsedTime, distance - MarkingDistance);
 				const olc::vf2d movement = toMarked * (moveDistance / distance);
 				MovePlayer(playerIndex, movement, false);
 			}

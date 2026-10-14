@@ -885,6 +885,10 @@ void NetballGame::SetBallCarrier(const std::size_t playerIndex,
 	defenderLockActive = false;
 	lockedDefenders.clear();
 	ballCarrier = playerIndex;
+	// Defenders not already within double-team range when the ball is
+	// gained can't close in until it is passed, shot or dropped.
+	lockedDefenders = CountNearbyDefenders(playerIndex, DoubleTeamRadius);
+	defenderLockActive = true;
 	catchBlendRemaining = 0.0f;
 	aiShooterPauseFor = static_cast<std::size_t>(-1);
 	aiShooterPauseRemaining = 0.0f;
