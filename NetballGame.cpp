@@ -92,9 +92,9 @@ bool NetballGame::OnUserCreate()
 
 	olc::ImageConfig playerConfig;
 	playerConfig.Filtered = true;
-	if (CreateImageFromFile(playerTextures[0], "assets/player.png", playerConfig))
+	if (CreateImageFromFile(playerBase, "assets/player.png", playerConfig))
 	{
-		olc::Image& playerTexture = playerTextures[0];
+		olc::Image& playerTexture = playerBase;
 		// The PNG has an opaque baked-in checkerboard and a black footer, so
 		// flood-fill the light-grey background from the edges and make it
 		// transparent. Enclosed white areas (e.g. the number plate) survive.
@@ -159,54 +159,7 @@ bool NetballGame::OnUserCreate()
 			}
 		playerTexture.BindCPU();
 
-		// Variants 1 (brown) and 2 (black): recolour the saturated yellow
-		// hair pixels, keeping their brightness so the strands stay visible.
-		const float hairColours[2][3] = {
-			{ 125.0f, 78.0f, 40.0f }, { 48.0f, 42.0f, 46.0f }
-		};
-		bool variantsOk = true;
-		for (int variant = 1; variant <= 2 && variantsOk; ++variant)
-		{
-			variantsOk = CreateImage(playerTextures[variant],
-				playerTexture.Size(), playerConfig);
-			if (!variantsOk)
-				break;
-			olc::Pixel* destination = playerTextures[variant].Data();
-			for (int i = 0; i < width * height; ++i)
-			{
-				olc::Pixel p = pixels[i];
-				const int hi = std::max({ int(p.r), int(p.g), int(p.b) });
-				const int lo = std::min({ int(p.r), int(p.g), int(p.b) });
-				const float saturation = hi > 0 ? float(hi - lo) / float(hi) : 0.0f;
-				float hue = 0.0f;
-				if (hi != lo)
-				{
-					if (hi == p.r)
-						hue = 60.0f * (float(p.g) - float(p.b)) / float(hi - lo);
-					else if (hi == p.g)
-						hue = 120.0f + 60.0f * (float(p.b) - float(p.r)) / float(hi - lo);
-					else
-						hue = 240.0f + 60.0f * (float(p.r) - float(p.g)) / float(hi - lo);
-					if (hue < 0.0f)
-						hue += 360.0f;
-				}
-				if (p.a > 0 && saturation > 0.6f && hue >= 35.0f && hue <= 65.0f)
-				{
-					const float brightness =
-						(0.299f * p.r + 0.587f * p.g + 0.114f * p.b) / 204.0f;
-					const auto tint = [&](const float base)
-					{
-						return uint8_t(std::clamp(base * brightness, 0.0f, 255.0f));
-					};
-					p = olc::Pixel(tint(hairColours[variant - 1][0]),
-						tint(hairColours[variant - 1][1]),
-						tint(hairColours[variant - 1][2]), p.a);
-				}
-				destination[i] = p;
-			}
-			playerTextures[variant].BindCPU();
-		}
-		playerTextureLoaded = variantsOk;
+		playerTextureLoaded = true;
 	}
 	else
 		std::cerr << "Unable to load player texture: assets/player.png\n";
@@ -238,8 +191,113 @@ bool NetballGame::OnUserCreate()
 		portraitSheetLoaded = CreateImageFromFile(
 			portraitSheet, "assets/portraits.jpg", portraitConfig);
 	if (!portraitSheetLoaded)
-		std::cerr << "No portrait sheet (assets/portraits.png or .jpg); "
+		portraitSheetLoaded = CreateImageFromFile(
+			portraitSheet, "assets/characters.jpg", portraitConfig);
+	if (!portraitSheetLoaded)
+		std::cerr << "No portrait sheet (assets/portraits.png, .jpg, or characters.jpg); "
 			"portraits are skipped\n";
+
+	// One texture per player: skin and hair tones are taken from the portrait.
+	if (playerTextureLoaded)
+	{
+		const olc::vi2d baseSize = playerBase.Size();
+		const olc::Pixel* basePixels = playerBase.Data();
+		const olc::Pixel* sheet = portraitSheetLoaded ? portraitSheet.Data() : nullptr;
+		const olc::vi2d sheetSize = portraitSheetLoaded
+			? portraitSheet.Size() : olc::vi2d{ 0, 0 };
+		const auto sample = [&](const int cell, const float fx0, const float fy0,
+			const float fx1, const float fy1, float (&rgb)[3])
+		{
+			const float cellWidth = float(sheetSize.x) / 10.0f;
+			const float cellHeight = float(sheetSize.y) / 10.0f;
+			const int x0 = int((cell % 10 + fx0) * cellWidth);
+			const int x1 = std::max(x0 + 1, int((cell % 10 + fx1) * cellWidth));
+			const int y0 = int((cell / 10 + fy0) * cellHeight);
+			const int y1 = std::max(y0 + 1, int((cell / 10 + fy1) * cellHeight));
+			float sum[3] = { 0, 0, 0 };
+			int count = 0;
+			for (int y = y0; y < y1 && y < sheetSize.y; ++y)
+				for (int x = x0; x < x1 && x < sheetSize.x; ++x)
+				{
+					const olc::Pixel p = sheet[y * sheetSize.x + x];
+					sum[0] += p.r; sum[1] += p.g; sum[2] += p.b;
+					++count;
+				}
+			for (int c = 0; c < 3; ++c)
+				rgb[c] = count > 0 ? sum[c] / float(count) : 0.0f;
+		};
+		const float defaultHair[3][3] = {
+			{ 204.0f, 170.0f, 20.0f }, { 125.0f, 78.0f, 40.0f }, { 48.0f, 42.0f, 46.0f }
+		};
+		const float baseSkin[3] = { 250.0f, 199.0f, 144.0f };
+		bool texturesOk = true;
+		for (std::size_t slot = 0; slot < playerTextures.size() && texturesOk; ++slot)
+		{
+			float skin[3] = { baseSkin[0], baseSkin[1], baseSkin[2] };
+			float hair[3] = { defaultHair[slot % 3][0], defaultHair[slot % 3][1],
+				defaultHair[slot % 3][2] };
+			if (sheet && slot < profiles.size())
+			{
+				const int cell = std::clamp(profiles[slot].portrait, 0, 99);
+				float cheekLeft[3], cheekRight[3], forehead[3], crown[3];
+				sample(cell, 0.34f, 0.50f, 0.44f, 0.58f, cheekLeft);
+				sample(cell, 0.56f, 0.50f, 0.66f, 0.58f, cheekRight);
+				sample(cell, 0.45f, 0.36f, 0.55f, 0.42f, forehead);
+				sample(cell, 0.40f, 0.04f, 0.60f, 0.12f, crown);
+				for (int c = 0; c < 3; ++c)
+					skin[c] = (cheekLeft[c] + cheekRight[c] + forehead[c]) / 3.0f;
+				// A bluish crown sample is the stadium background (short hair).
+				if (crown[2] < crown[0] + 10.0f)
+					for (int c = 0; c < 3; ++c)
+						hair[c] = crown[c];
+			}
+			texturesOk = CreateImage(playerTextures[slot], baseSize, playerConfig);
+			if (!texturesOk)
+				break;
+			olc::Pixel* destination = playerTextures[slot].Data();
+			for (int i = 0; i < baseSize.x * baseSize.y; ++i)
+			{
+				olc::Pixel p = basePixels[i];
+				const int hi = std::max({ int(p.r), int(p.g), int(p.b) });
+				const int lo = std::min({ int(p.r), int(p.g), int(p.b) });
+				const float saturation = hi > 0 ? float(hi - lo) / float(hi) : 0.0f;
+				float hue = 0.0f;
+				if (hi != lo)
+				{
+					if (hi == p.r)
+						hue = 60.0f * (float(p.g) - float(p.b)) / float(hi - lo);
+					else if (hi == p.g)
+						hue = 120.0f + 60.0f * (float(p.b) - float(p.r)) / float(hi - lo);
+					else
+						hue = 240.0f + 60.0f * (float(p.r) - float(p.g)) / float(hi - lo);
+					if (hue < 0.0f)
+						hue += 360.0f;
+				}
+				if (p.a > 0 && saturation > 0.6f && hue >= 35.0f && hue <= 65.0f)
+				{
+					const float brightness =
+						(0.299f * p.r + 0.587f * p.g + 0.114f * p.b) / 204.0f;
+					p = olc::Pixel(
+						uint8_t(std::clamp(hair[0] * brightness, 0.0f, 255.0f)),
+						uint8_t(std::clamp(hair[1] * brightness, 0.0f, 255.0f)),
+						uint8_t(std::clamp(hair[2] * brightness, 0.0f, 255.0f)), p.a);
+				}
+				else if (p.a > 0 && p.r >= 190 && saturation >= 0.22f &&
+					saturation <= 0.5f && hue >= 15.0f && hue <= 35.0f)
+				{
+					// Skin: scale by the ratio to the original tone, keeping shading.
+					p = olc::Pixel(
+						uint8_t(std::clamp(p.r * skin[0] / baseSkin[0], 0.0f, 255.0f)),
+						uint8_t(std::clamp(p.g * skin[1] / baseSkin[1], 0.0f, 255.0f)),
+						uint8_t(std::clamp(p.b * skin[2] / baseSkin[2], 0.0f, 255.0f)),
+						p.a);
+				}
+				destination[i] = p;
+			}
+			playerTextures[slot].BindCPU();
+		}
+		playerTextureLoaded = texturesOk;
+	}
 
 	projection.perspective(25.0f * Pi / 180.0f,
 		float(ScreenSize().x) / float(ScreenSize().y), 0.1f, 150.0f);
@@ -1781,18 +1839,26 @@ void NetballGame::UpdatePassing(const float elapsedTime)
 		// Two or more defenders on either end of the pass add up to 30%, scaled
 		// by the average defence rating of the two closest defenders.
 		float doubleTeamDrop = 0.0f;
+		std::size_t doubleTeamDefenderCount = 0;
 		for (const std::size_t end : { ballCarrier, passReceiver })
 		{
 			const std::vector<std::size_t> nearby =
 				CountNearbyDefenders(end, DoubleTeamRadius);
 			if (nearby.size() >= 2)
 			{
+				doubleTeamDefenderCount = std::max(
+					doubleTeamDefenderCount, nearby.size());
 				const float defence = 0.5f * float(
 					profiles[nearby[0]].defence + profiles[nearby[1]].defence);
 				doubleTeamDrop = std::max(doubleTeamDrop,
 					0.30f * defence / 3.0f);
 			}
 		}
+		if (doubleTeamDefenderCount > 0)
+			LogEvent("DOUBLE_TEAM_PASS defenders=" +
+				std::to_string(doubleTeamDefenderCount) +
+				" extra_drop_percent=" +
+				std::to_string(int(std::lround(doubleTeamDrop * 100.0f))));
 		const float dropChance = CatchUpAssistActive(passer.homeTeam) ? 0.0f
 			: std::min(0.95f, baseDrop * skillScale + doubleTeamDrop);
 		std::uniform_real_distribution<float> randomChance(0.0f, 1.0f);
@@ -2542,7 +2608,8 @@ olc::vf2d NetballGame::PredictLooseBallLanding() const
 
 void NetballGame::DrawPlayerPanel()
 {
-	if (demoActive || gameOver || selectedPlayer >= players.size())
+	if (gameOver || selectedPlayer >= players.size() ||
+		selectedPlayer >= profiles.size())
 		return;
 	const netball::Player& player = players[selectedPlayer];
 	const netball::PlayerProfile& profile = profiles[selectedPlayer];

@@ -50,7 +50,8 @@ private:
 	bool floorTextureLoaded = false;
 	olc::Image splashImage;
 	olc::Image ballTexture;
-	std::array<olc::Image, 3> playerTextures;
+	olc::Image playerBase;
+	std::array<olc::Image, 18> playerTextures;
 	bool playerTextureLoaded = false;
 	float ballSpinAngle = 0.0f;
 	bool splashActive = true;
@@ -92,9 +93,9 @@ private:
 	std::vector<netball::PlayerProfile> profiles;
 	olc::Image portraitSheet;
 	bool portraitSheetLoaded = false;
-	// Players within the double-team radius of the ball carrier, if 2 or more.
+	// Players within the 0.5 m double-team radius of the ball carrier.
 	std::vector<std::size_t> doubleTeamed;
-	static constexpr float DoubleTeamRadius = 1.0f;
+	static constexpr float DoubleTeamRadius = 0.5f;
 	std::vector<std::size_t> CountNearbyDefenders(std::size_t index, float radius) const;
 	// Defenders already within reach when the receiver caught the ball; nobody
 	// else may close in until the ball is released.

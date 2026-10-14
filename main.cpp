@@ -27,14 +27,14 @@ int main(const int argc, char* argv[])
 		}
 	}
 
-	// Render scale: 4 = 10240x6400 (default); --1x/--2x select lower resolutions.
-	int renderScale = 4;
+	// Render scale: 3 = 7680x4800 (default); --1x..--4x select other sizes.
+	int renderScale = 3;
 	for (int i = 1; i < argc; ++i)
 	{
-		if (std::string(argv[i]) == "--1x")
-			renderScale = 1;
-		else if (std::string(argv[i]) == "--2x")
-			renderScale = 2;
+		const std::string argument = argv[i];
+		if (argument.size() == 4 && argument[0] == '-' && argument[1] == '-' &&
+			argument[2] >= '1' && argument[2] <= '4' && argument[3] == 'x')
+			renderScale = argument[2] - '0';
 	}
 
 	NetballGame game;

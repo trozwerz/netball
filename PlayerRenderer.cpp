@@ -244,12 +244,12 @@ namespace netball
 			static std::vector<olc::Pixel> texturedColours;
 			static std::vector<olc::vf2d> uvs;
 			draw.SetBlendMode(olc::BlendMode::Alpha);
-			for (std::size_t variant = 0; variant < 3; ++variant)
+			for (std::size_t variant = 0; variant < std::min<std::size_t>(players.size(), 18); ++variant)
 			{
 				texturedPoints.clear();
 				texturedColours.clear();
 				uvs.clear();
-				for (std::size_t i = variant; i < players.size(); i += 3)
+				for (std::size_t i = variant; i < players.size(); i += players.size())
 				{
 					const Player& player = players[i];
 					const float centerY = (3.44f + 0.06f) * 0.5f;
