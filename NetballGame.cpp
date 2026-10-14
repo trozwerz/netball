@@ -751,6 +751,8 @@ void NetballGame::StartMatch()
 	superStreamRemaining = 0.0f;
 	shotIsSuper = false;
 	gameOver = false;
+	for (netball::PlayerProfile& profile : profiles)
+		profile.goals = profile.assists = profile.rebounds = profile.turnovers = 0;
 	aiAttackMode = false;
 	ResetAfterShot();
 	homeTurnovers = awayTurnovers = 0;
@@ -1605,6 +1607,62 @@ void NetballGame::DrawGameOver()
 		topLeft.y + 60.0f + titleSize.y },
 		score, olc::Colour::WHITE, scoreScale);
 	DrawConfirmPrompt("to continue", gameOverHold / GameOverHoldSeconds);
+
+	// Top scorer, assister and turnover winner, each with portrait and stats.
+	struct Leader { const char* title; std::size_t index; int value; };
+	std::array<Leader, 3> leaders{ {
+		{ "TOP SCORER", 0, 0 }, { "TOP ASSIST", 0, 0 }, { "TOP TURNOVERS", 0, 0 } } };
+	for (std::size_t i = 0; i < profiles.size(); ++i)
+	{
+		const int values[3] = { profiles[i].goals, profiles[i].assists,
+			profiles[i].turnovers };
+		for (std::size_t k = 0; k < 3; ++k)
+			if (values[k] > leaders[k].value)
+			{
+				leaders[k].value = values[k];
+				leaders[k].index = i;
+			}
+	}
+	constexpr float cardWidth = 520.0f, cardHeight = 230.0f, gap = 30.0f;
+	const float rowWidth = 3.0f * cardWidth + 2.0f * gap;
+	const float rowLeft = (screen.x - rowWidth) * 0.5f;
+	const float rowTop = topLeft.y + height + 40.0f;
+	for (std::size_t k = 0; k < 3; ++k)
+	{
+		const olc::vf2d origin{ rowLeft + float(k) * (cardWidth + gap), rowTop };
+		UiFilledRect(origin, { cardWidth, cardHeight }, olc::Pixel(0, 0, 0, 215));
+		UiString({ origin.x + 24.0f, origin.y + 14.0f }, leaders[k].title,
+			olc::Pixel(255, 215, 90), { 3.0f, 3.0f });
+		if (leaders[k].value <= 0)
+		{
+			UiString({ origin.x + 24.0f, origin.y + 100.0f }, "NONE",
+				olc::Pixel(180, 180, 180), { 4.0f, 4.0f });
+			continue;
+		}
+		const netball::PlayerProfile& profile = profiles[leaders[k].index];
+		float textLeft = origin.x + 24.0f;
+		if (portraitSheetLoaded)
+		{
+			const int cell = std::clamp(profile.portrait, 0, 99);
+			const float u0 = float(cell % 10) / 10.0f, v0 = float(cell / 10) / 10.0f;
+			const olc::ImageRegion region(portraitSheet, { u0, v0 },
+				{ u0 + 0.1f, v0 }, { u0, v0 + 0.1f }, { u0 + 0.1f, v0 + 0.1f });
+			draw.SetBlendMode(olc::BlendMode::Alpha);
+			draw.ImageRect(region, (origin + olc::vf2d{ 24.0f, 60.0f }) * uiScale,
+				olc::vf2d{ 150.0f, 150.0f } * uiScale);
+			textLeft += 170.0f;
+		}
+		UiString({ textLeft, origin.y + 70.0f }, profile.name,
+			olc::Colour::WHITE, { 4.0f, 4.0f });
+		UiString({ textLeft, origin.y + 125.0f },
+			"G " + std::to_string(profile.goals) +
+			"  A " + std::to_string(profile.assists),
+			olc::Colour::WHITE, { 3.0f, 3.0f });
+		UiString({ textLeft, origin.y + 165.0f },
+			"R " + std::to_string(profile.rebounds) +
+			"  T " + std::to_string(profile.turnovers),
+			olc::Colour::WHITE, { 3.0f, 3.0f });
+	}
 }
 
 void NetballGame::DrawShootingMeter()
