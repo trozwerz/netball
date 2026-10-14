@@ -111,7 +111,11 @@ namespace netball
 		};
 		const auto uv = [&](const float phi, const float theta)
 		{
-			return olc::vf2d{ theta / (2.0f * Pi), phi / Pi };
+			// The texture has white margins; use only the dimpled area.
+			constexpr float uMin = 62.0f / 1376.0f, uMax = 1314.0f / 1376.0f;
+			constexpr float vMin = 44.0f / 768.0f, vMax = 725.0f / 768.0f;
+			return olc::vf2d{ uMin + (uMax - uMin) * theta / (2.0f * Pi),
+				vMin + (vMax - vMin) * phi / Pi };
 		};
 
 		for (int latitude = 0; latitude < latitudeSegments; ++latitude)
