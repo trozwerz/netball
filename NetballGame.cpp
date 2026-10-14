@@ -2526,8 +2526,8 @@ void NetballGame::UpdateGoalParticles(const float elapsedTime)
 				continue;
 			const olc::Pixel teamColour = player.homeTeam
 				? netball::HomeTeamColour : netball::AwayTeamDisplayColour;
-			// About 240 sparks per second on a ring around the player, at the
-			// height of the top quarter of the body, drawn 70% opaque.
+			// About 480 sparks per second rising from the floor on a ring
+			// around the player, drawn 70% opaque.
 			const float expected = 480.0f * elapsedTime;
 			int count = int(expected);
 			if (unit(randomEngine) < expected - float(count))
@@ -2539,7 +2539,7 @@ void NetballGame::UpdateGoalParticles(const float elapsedTime)
 				const olc::Pixel shaded = teamShade(teamColour);
 				goalParticles.push_back({
 					{ player.position.x + ringRadius * std::cos(angle),
-						2.6f + unit(randomEngine) * 0.84f,
+						0.05f + unit(randomEngine) * 0.1f,
 						player.position.z + ringRadius * std::sin(angle) },
 					{ 0.0f, (4.0f + unit(randomEngine) * 5.0f) * 1.25f, 0.0f },
 					olc::Pixel(shaded.r, shaded.g, shaded.b, 178), 0.175f,
